@@ -6,6 +6,7 @@ import { openai } from './openaiClient';
 import adminRouter from './routes/admin';
 import documentsRouter from './routes/documents';
 import templatesRouter from './routes/templates';
+import searchRouter from './routes/search';
 
 const app = express();
 
@@ -53,6 +54,9 @@ app.use('/api/documents', documentsRouter);
 
 // Template inspection routes.
 app.use('/api/templates', templatesRouter);
+
+// Search routes.
+app.use('/api/search', searchRouter);
 
 app.listen(config.port, () => {
   console.log(`Argus backend listening on port ${config.port}`);
