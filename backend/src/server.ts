@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import path from 'path';
 import { config } from './config';
 import { requireAuth } from './middleware/auth';
@@ -8,13 +9,16 @@ import adminRouter from './routes/admin';
 import documentsRouter from './routes/documents';
 import templatesRouter from './routes/templates';
 import searchRouter from './routes/search';
+import filesRouter from './routes/files';
+import authRouter from './routes/auth';
 
 const app = express();
 
 app.use(cors());
+app.use(cookieParser());
 app.use(express.json());
 
-// Serve simple static assets (e.g., upload form) from /public.
+// Serve simple static assets (e.g., upload and list pages) from /public.
 app.use(
   express.static(path.join(__dirname, '..', 'public'), {
     index: false,
@@ -65,6 +69,12 @@ app.use('/api/templates', templatesRouter);
 
 // Search routes.
 app.use('/api/search', searchRouter);
+
+// File streaming routes.
+app.use('/api/files', filesRouter);
+
+// Auth routes.
+app.use('/api/auth', authRouter);
 
 app.listen(config.port, () => {
   console.log(`Argus backend listening on port ${config.port}`);

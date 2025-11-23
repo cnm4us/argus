@@ -15,10 +15,19 @@ interface SearchRequestBody {
   clinic_or_facility?: string;
   date_from?: string;
   date_to?: string;
+  include_inactive?: boolean;
 }
 
 function buildFilters(body: SearchRequestBody): ComparisonFilter | CompoundFilter | null {
   const filters: ComparisonFilter[] = [];
+
+  if (!body.include_inactive) {
+    filters.push({
+      key: 'is_active',
+      type: 'eq',
+      value: true,
+    });
+  }
 
   if (body.document_type && isKnownDocumentType(body.document_type)) {
     filters.push({

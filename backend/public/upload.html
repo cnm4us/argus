@@ -86,15 +86,6 @@
       </p>
 
       <form id="upload-form">
-        <label for="password">Password (APP_PASSWORD)</label>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autocomplete="current-password"
-          required
-        />
-
         <label for="document_type">Document Type</label>
         <select id="document_type" name="document_type" required>
           <option value="">Select type…</option>
@@ -142,13 +133,12 @@
         responseEl.hidden = true;
         responseEl.textContent = '';
 
-        const password = (document.getElementById('password').value || '').trim();
         const documentType = document.getElementById('document_type').value;
         const fileInput = document.getElementById('file');
         const file = fileInput.files[0];
 
-        if (!password || !documentType || !file) {
-          statusEl.textContent = 'Password, document type, and file are required.';
+        if (!documentType || !file) {
+          statusEl.textContent = 'Document type and file are required.';
           statusEl.classList.add('error');
           return;
         }
@@ -161,11 +151,8 @@
         statusEl.textContent = 'Uploading and processing…';
 
         try {
-          const res = await fetch('/api/documents', {
+          const res = await fetch('/api/documents?async=1', {
             method: 'POST',
-            headers: {
-              Authorization: 'Bearer ' + password,
-            },
             body: formData,
           });
 
@@ -195,4 +182,3 @@
     </script>
   </body>
 </html>
-

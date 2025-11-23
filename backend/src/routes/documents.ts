@@ -106,6 +106,9 @@ router.post(
         return;
       }
 
+      const asyncFlag = String((req.query as any).async ?? '').toLowerCase();
+      const asyncMode = asyncFlag === '1' || asyncFlag === 'true';
+
       const { originalname, buffer } = req.file;
       const { document_type } = req.body as { document_type?: string };
 
@@ -123,24 +126,31 @@ router.post(
         purpose: 'assistants',
       });
 
-      // 2) Extract structured metadata using the templates and file.
-      const metadata = await extractMetadata(
-        document_type,
-        file.id,
-        originalname,
-      );
-
       const attributes: { [key: string]: string | number | boolean } = {
         document_type,
         file_name: originalname,
         file_id: file.id,
+        is_active: true,
       };
 
-      if (metadata) {
-        if (metadata.date) attributes.date = metadata.date;
-        if (metadata.provider_name) attributes.provider_name = metadata.provider_name;
-        if (metadata.clinic_or_facility) {
-          attributes.clinic_or_facility = metadata.clinic_or_facility;
+      let metadata: DocumentMetadata | null = null;
+
+      if (!asyncMode) {
+        // 2) Extract structured metadata using the templates and file.
+        metadata = await extractMetadata(
+          document_type,
+          file.id,
+          originalname,
+        );
+
+        if (metadata) {
+          if (metadata.date) attributes.date = metadata.date;
+          if (metadata.provider_name) {
+            attributes.provider_name = metadata.provider_name;
+          }
+          if (metadata.clinic_or_facility) {
+            attributes.clinic_or_facility = metadata.clinic_or_facility;
+          }
         }
       }
 
@@ -160,6 +170,7 @@ router.post(
         filename: originalname,
         ingestionStatus: vectorStoreFile.status,
         metadata,
+        async: asyncMode,
       });
     } catch (error) {
       console.error('Error in POST /api/documents:', error);
@@ -242,6 +253,40 @@ router.delete('/:id', requireAuth, async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/documents/:id/soft-delete
+// Mark a document as inactive so it is excluded from search but retained in the store.
+router.post('/:id/soft-delete', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!config.vectorStoreId) {
+      res.status(500).json({ error: 'ARGUS_VECTOR_STORE_ID not configured' });
+      return;
+    }
+
+    const { id } = req.params;
+
+    const file = await openai.vectorStores.files.retrieve(id, {
+      vector_store_id: config.vectorStoreId,
+    });
+
+    const attributes = file.attributes ?? {};
+    const updated = await openai.vectorStores.files.update(id, {
+      vector_store_id: config.vectorStoreId,
+      attributes: {
+        ...attributes,
+        is_active: false,
+      },
+    });
+
+    res.json({
+      ok: true,
+      file: updated,
+    });
+  } catch (error) {
+    console.error('Error in POST /api/documents/:id/soft-delete:', error);
+    res.status(500).json({ error: 'Failed to soft-delete document' });
+  }
+});
+
 // GET /api/documents/:id
 // Retrieve a single vector store file's metadata.
 router.get('/:id', requireAuth, async (req: Request, res: Response) => {
@@ -268,6 +313,72 @@ router.get('/:id', requireAuth, async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error in GET /api/documents/:id:', error);
     res.status(500).json({ error: 'Failed to retrieve document' });
+  }
+});
+
+// GET /api/documents/:id/metadata
+// Run metadata extraction on demand for a given vector store file.
+router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!config.vectorStoreId) {
+      res.status(500).json({ error: 'ARGUS_VECTOR_STORE_ID not configured' });
+      return;
+    }
+
+    const { id } = req.params;
+
+    const file = await openai.vectorStores.files.retrieve(id, {
+      vector_store_id: config.vectorStoreId,
+    });
+
+    const attributes = (file.attributes ?? {}) as {
+      [key: string]: string | number | boolean;
+    };
+
+    const documentTypeRaw = attributes.document_type;
+    const fileIdRaw = attributes.file_id;
+    const fileNameRaw = attributes.file_name;
+
+    if (typeof documentTypeRaw !== 'string' || !isValidDocumentType(documentTypeRaw)) {
+      res.status(400).json({ error: 'Missing or invalid document_type on vector store file' });
+      return;
+    }
+    if (typeof fileIdRaw !== 'string') {
+      res.status(400).json({ error: 'Missing file_id attribute on vector store file' });
+      return;
+    }
+
+    const metadata = await extractMetadata(
+      documentTypeRaw,
+      fileIdRaw,
+      typeof fileNameRaw === 'string' ? fileNameRaw : 'document.pdf',
+    );
+
+    if (!metadata) {
+      res.status(500).json({ error: 'Metadata extraction failed' });
+      return;
+    }
+
+    // Update searchable attributes based on latest metadata.
+    const updatedAttributes: { [key: string]: string | number | boolean } = {
+      ...attributes,
+    };
+
+    if (metadata.date) updatedAttributes.date = metadata.date;
+    if (metadata.provider_name) updatedAttributes.provider_name = metadata.provider_name;
+    if (metadata.clinic_or_facility) {
+      updatedAttributes.clinic_or_facility = metadata.clinic_or_facility;
+    }
+
+    await openai.vectorStores.files.update(id, {
+      vector_store_id: config.vectorStoreId,
+      attributes: updatedAttributes,
+    });
+
+    res.json({ metadata });
+  } catch (error) {
+    console.error('Error in GET /api/documents/:id/metadata:', error);
+    res.status(500).json({ error: 'Failed to extract metadata' });
   }
 });
 
