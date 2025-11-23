@@ -13,6 +13,7 @@ import {
   type DocumentMetadata,
 } from '../documentTypes';
 import { loadTemplateForDocumentType } from '../templates';
+import { getDb } from '../db';
 
 const router = express.Router();
 
@@ -177,6 +178,42 @@ router.post(
         },
       );
 
+      // 4) Persist metadata snapshot into MariaDB.
+      try {
+        const db = await getDb();
+        const dateValue =
+          metadata && metadata.date ? metadata.date.slice(0, 10) : null;
+
+        await db.query(
+          `
+          INSERT INTO documents (
+            vector_store_file_id,
+            openai_file_id,
+            filename,
+            document_type,
+            date,
+            provider_name,
+            clinic_or_facility,
+            is_active,
+            metadata_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+          [
+            vectorStoreFile.id,
+            file.id,
+            originalname,
+            document_type,
+            dateValue,
+            metadata ? metadata.provider_name : null,
+            metadata ? metadata.clinic_or_facility : null,
+            1,
+            JSON.stringify(metadata ?? {}),
+          ],
+        );
+      } catch (err) {
+        console.error('Failed to persist document metadata to DB:', err);
+      }
+
       res.status(201).json({
         fileId: file.id,
         vectorStoreFileId: vectorStoreFile.id,
@@ -256,6 +293,16 @@ router.delete('/:id', requireAuth, async (req: Request, res: Response) => {
       }
     }
 
+    // Best-effort delete of DB row.
+    try {
+      const db = await getDb();
+      await db.query('DELETE FROM documents WHERE vector_store_file_id = ?', [
+        id,
+      ]);
+    } catch (err) {
+      console.error('Failed to delete document row from DB:', err);
+    }
+
     res.json({
       ok: true,
       vectorStoreFileDeleted: deleted,
@@ -290,6 +337,16 @@ router.post('/:id/soft-delete', requireAuth, async (req: Request, res: Response)
         is_active: false,
       },
     });
+
+    try {
+      const db = await getDb();
+      await db.query(
+        'UPDATE documents SET is_active = 0 WHERE vector_store_file_id = ?',
+        [id],
+      );
+    } catch (err) {
+      console.error('Failed to update document is_active in DB:', err);
+    }
 
     res.json({
       ok: true,

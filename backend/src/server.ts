@@ -11,6 +11,7 @@ import templatesRouter from './routes/templates';
 import searchRouter from './routes/search';
 import filesRouter from './routes/files';
 import authRouter from './routes/auth';
+import { initDb } from './db';
 
 const app = express();
 
@@ -75,6 +76,11 @@ app.use('/api/files', filesRouter);
 
 // Auth routes.
 app.use('/api/auth', authRouter);
+
+// Initialize database (ensures tables exist).
+initDb().catch((err) => {
+  console.error('Failed to initialize database:', err);
+});
 
 app.listen(config.port, () => {
   console.log(`Argus backend listening on port ${config.port}`);

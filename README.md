@@ -65,6 +65,7 @@ Response includes:
 - `vectorStoreFileId` – vector store file ID.
 - `ingestionStatus` – indexing status.
 - `metadata` – full extracted `DocumentMetadata` JSON.
+- A snapshot of this metadata is also persisted into the MariaDB `documents` table.
 
 By default, new documents are marked with `is_active: true` in their attributes and will participate in search.
 
@@ -159,4 +160,3 @@ The form:
 - Lets you choose a `document_type` and a PDF file,
 - Calls `POST /api/documents`,
 - Displays the JSON response (including extracted metadata) inline.
-
