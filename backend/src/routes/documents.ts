@@ -1,6 +1,8 @@
 import express from 'express';
 import multer from 'multer';
 import type { Request, Response } from 'express';
+import fs from 'fs/promises';
+import path from 'path';
 import { toFile } from 'openai';
 import { requireAuth } from '../middleware/auth';
 import { config } from '../config';
@@ -20,6 +22,8 @@ const upload = multer({
     fileSize: 50 * 1024 * 1024, // 50 MB
   },
 });
+
+const localFileDir = path.join(__dirname, '..', 'file_store');
 
 function isValidDocumentType(value: string): value is DocumentType {
   return (DOCUMENT_TYPES as readonly string[]).includes(value);
@@ -132,6 +136,16 @@ router.post(
         file_id: file.id,
         is_active: true,
       };
+
+      // Best-effort save of a local PDF copy for browser viewing.
+      try {
+        await fs.mkdir(localFileDir, { recursive: true });
+        const localPath = path.join(localFileDir, `${file.id}.pdf`);
+        await fs.writeFile(localPath, buffer);
+        attributes.has_local_copy = true;
+      } catch (err) {
+        console.warn('Failed to save local PDF copy', err);
+      }
 
       let metadata: DocumentMetadata | null = null;
 
