@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
 import { config } from './config';
 import { requireAuth } from './middleware/auth';
 import { openai } from './openaiClient';
@@ -12,6 +13,13 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+// Serve simple static assets (e.g., upload form) from /public.
+app.use(
+  express.static(path.join(__dirname, '..', 'public'), {
+    index: false,
+  }),
+);
 
 app.get('/health', (_req, res) => {
   res.json({

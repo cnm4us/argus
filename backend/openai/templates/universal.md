@@ -38,7 +38,7 @@ The JSON MUST conform to this schema.
 - `document_type`: one of the known document type values provided in the instructions (e.g. `office_visit`, `telehealth_visit`, etc.).
 - `file_id`, `file_name`: leave as empty strings; the application will fill these.
 - `page_range`: textual range like `"1-3"` or `"2"`, or `""` if unknown.
-- `date`: ISO-like `"YYYY-MM-DD"` if possible, otherwise the best textual date.
+- `date`: MUST be in ISO format `"YYYY-MM-DD"`. If the exact day is unclear but the month and year are known, approximate with the first of the month (e.g. `"2024-12-01"`). If no reasonable date can be inferred, use `""`.
 - `provider_name`: primary clinician's name if available.
 - `provider_role`: e.g. `"MD"`, `"NP"`, `"PA"`, `"RN"`, `"specialist"`, `"attorney"`.
 - `clinic_or_facility`: clinic, hospital, practice, or institution name.
@@ -229,4 +229,3 @@ The JSON MUST conform to this schema.
 ## Final Output
 
 Produce a single JSON object with ALL fields from sections A through K filled out as best you can, respecting the types and rules above.
-
