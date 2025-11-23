@@ -13,9 +13,11 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@types/multer": "^2.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "multer": "^2.0.2",
     "openai": "^6.9.1"
   },
   "devDependencies": {

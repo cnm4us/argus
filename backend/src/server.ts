@@ -3,6 +3,8 @@ import cors from 'cors';
 import { config } from './config';
 import { requireAuth } from './middleware/auth';
 import { openai } from './openaiClient';
+import adminRouter from './routes/admin';
+import documentsRouter from './routes/documents';
 
 const app = express();
 
@@ -13,6 +15,7 @@ app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     hasOpenAIApiKey: Boolean(config.openaiApiKey),
+    hasVectorStoreId: Boolean(config.vectorStoreId),
   });
 });
 
@@ -40,6 +43,12 @@ app.get('/api/openai/health', requireAuth, async (_req, res) => {
     res.status(500).json({ ok: false, error: 'OpenAI request failed' });
   }
 });
+
+// Admin routes (e.g., vector store init).
+app.use('/api/admin', adminRouter);
+
+// Document upload and (later) metadata routes.
+app.use('/api/documents', documentsRouter);
 
 app.listen(config.port, () => {
   console.log(`Argus backend listening on port ${config.port}`);
