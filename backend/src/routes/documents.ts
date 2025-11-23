@@ -57,7 +57,7 @@ router.post(
         purpose: 'assistants',
       });
 
-      // 2) Attach to vector store with minimal attributes
+      // 2) Attach to vector store with minimal attributes (including underlying file_id)
       const vectorStoreFile = await openai.vectorStores.files.create(
         config.vectorStoreId,
         {
@@ -65,6 +65,7 @@ router.post(
           attributes: {
             document_type,
             file_name: originalname,
+            file_id: file.id,
           },
         },
       );
@@ -108,6 +109,52 @@ router.get('/', requireAuth, async (_req: Request, res: Response) => {
   } catch (error) {
     console.error('Error in GET /api/documents:', error);
     res.status(500).json({ error: 'Failed to list documents' });
+  }
+});
+
+// DELETE /api/documents/:id
+// Remove a file from the vector store (and delete the underlying File when possible).
+router.delete('/:id', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!config.vectorStoreId) {
+      res.status(500).json({ error: 'ARGUS_VECTOR_STORE_ID not configured' });
+      return;
+    }
+
+    const { id } = req.params;
+
+    // Retrieve to discover attributes (including original file_id when available).
+    const file = await openai.vectorStores.files.retrieve(id, {
+      vector_store_id: config.vectorStoreId,
+    });
+
+    const attributes = file.attributes ?? {};
+    const underlyingFileId =
+      typeof attributes.file_id === 'string' ? (attributes.file_id as string) : undefined;
+
+    // Detach from vector store.
+    const deleted = await openai.vectorStores.files.delete(id, {
+      vector_store_id: config.vectorStoreId,
+    });
+
+    // Best-effort delete of the underlying file; for older entries this may be missing.
+    let fileDeleteResult: unknown = null;
+    if (underlyingFileId) {
+      try {
+        fileDeleteResult = await openai.files.delete(underlyingFileId);
+      } catch (err) {
+        console.warn('Failed to delete underlying file', underlyingFileId, err);
+      }
+    }
+
+    res.json({
+      ok: true,
+      vectorStoreFileDeleted: deleted,
+      underlyingFileDeleted: fileDeleteResult,
+    });
+  } catch (error) {
+    console.error('Error in DELETE /api/documents/:id:', error);
+    res.status(500).json({ error: 'Failed to delete document' });
   }
 });
 

@@ -5,6 +5,7 @@ import { requireAuth } from './middleware/auth';
 import { openai } from './openaiClient';
 import adminRouter from './routes/admin';
 import documentsRouter from './routes/documents';
+import templatesRouter from './routes/templates';
 
 const app = express();
 
@@ -49,6 +50,9 @@ app.use('/api/admin', adminRouter);
 
 // Document upload and (later) metadata routes.
 app.use('/api/documents', documentsRouter);
+
+// Template inspection routes.
+app.use('/api/templates', templatesRouter);
 
 app.listen(config.port, () => {
   console.log(`Argus backend listening on port ${config.port}`);
