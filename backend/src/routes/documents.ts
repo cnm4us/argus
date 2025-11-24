@@ -398,6 +398,38 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
 
     const { id } = req.params;
 
+    // Fast path: if we already have metadata in the DB, return it without
+    // re-calling OpenAI.
+    try {
+      const db = await getDb();
+      const [rows] = (await db.query(
+        'SELECT metadata_json FROM documents WHERE vector_store_file_id = ? LIMIT 1',
+        [id],
+      )) as any[];
+
+      if (Array.isArray(rows) && rows.length > 0) {
+        const row = rows[0] as any;
+        let raw = row.metadata_json;
+
+        // In MariaDB, JSON columns may come back as strings; parse if needed.
+        if (typeof raw === 'string') {
+          try {
+            raw = JSON.parse(raw);
+          } catch {
+            // If parsing fails, treat as missing and fall through to OpenAI.
+            raw = null;
+          }
+        }
+
+        if (raw && typeof raw === 'object' && Object.keys(raw).length > 0) {
+          res.json({ metadata: raw });
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to read metadata from DB, falling back to OpenAI:', err);
+    }
+
     const file = await openai.vectorStores.files.retrieve(id, {
       vector_store_id: config.vectorStoreId,
     });
@@ -445,6 +477,49 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
       vector_store_id: config.vectorStoreId,
       attributes: updatedAttributes,
     });
+
+    // Persist or update metadata snapshot in DB.
+    try {
+      const db = await getDb();
+      const dateValue = metadata.date ? metadata.date.slice(0, 10) : null;
+
+      await db.query(
+        `
+        INSERT INTO documents (
+          vector_store_file_id,
+          openai_file_id,
+          filename,
+          document_type,
+          date,
+          provider_name,
+          clinic_or_facility,
+          is_active,
+          metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          filename = VALUES(filename),
+          document_type = VALUES(document_type),
+          date = VALUES(date),
+          provider_name = VALUES(provider_name),
+          clinic_or_facility = VALUES(clinic_or_facility),
+          is_active = VALUES(is_active),
+          metadata_json = VALUES(metadata_json)
+      `,
+        [
+          id,
+          fileIdRaw,
+          typeof fileNameRaw === 'string' ? fileNameRaw : 'document.pdf',
+          documentTypeRaw,
+          dateValue,
+          metadata.provider_name,
+          metadata.clinic_or_facility,
+          1,
+          JSON.stringify(metadata),
+        ],
+      );
+    } catch (err) {
+      console.error('Failed to upsert document metadata in DB:', err);
+    }
 
     res.json({ metadata });
   } catch (error) {

@@ -122,7 +122,8 @@
           statusEl.textContent = 'Metadata loaded.';
           statusEl.className = 'status-line';
           metadataEl.hidden = false;
-          metadataEl.textContent = JSON.stringify(json, null, 2);
+          const metadataOnly = json && json.metadata ? json.metadata : json;
+          metadataEl.textContent = JSON.stringify(metadataOnly, null, 2);
         } catch (err) {
           console.error(err);
           statusEl.textContent = 'Unexpected error loading metadata.';
