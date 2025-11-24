@@ -37,4 +37,33 @@ router.post('/vector-store/init', requireAuth, async (_req, res) => {
   }
 });
 
+// GET /api/admin/openai/documents
+// List vector store files directly from OpenAI for debugging.
+router.get('/openai/documents', requireAuth, async (_req, res) => {
+  try {
+    if (!config.vectorStoreId) {
+      res.status(500).json({ error: 'ARGUS_VECTOR_STORE_ID not configured' });
+      return;
+    }
+
+    const page = await openai.vectorStores.files.list(config.vectorStoreId, {
+      order: 'desc',
+    });
+
+    const items = page.data.map((file) => ({
+      id: file.id,
+      vectorStoreId: file.vector_store_id,
+      status: file.status,
+      usageBytes: file.usage_bytes,
+      attributes: file.attributes ?? null,
+      lastError: file.last_error,
+    }));
+
+    res.json({ items });
+  } catch (error) {
+    console.error('Error in GET /api/admin/openai/documents:', error);
+    res.status(500).json({ error: 'Failed to list OpenAI documents' });
+  }
+});
+
 export default router;

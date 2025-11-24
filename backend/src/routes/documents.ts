@@ -13,6 +13,7 @@ import {
 import { loadTemplateForDocumentType } from '../templates';
 import { getDb } from '../db';
 import { uploadPdfToS3, deleteObjectFromS3 } from '../s3Client';
+import { logOpenAI } from '../logger';
 
 const router = express.Router();
 
@@ -33,6 +34,12 @@ async function extractMetadata(
   fileName: string,
 ): Promise<DocumentMetadata | null> {
   try {
+    logOpenAI('extractMetadata:start', {
+      documentType,
+      fileId,
+      fileName,
+    });
+
     const template = await loadTemplateForDocumentType(documentType);
 
     const response = await openai.responses.create({
@@ -81,9 +88,21 @@ async function extractMetadata(
       parsed.file_name = fileName;
     }
 
+    logOpenAI('extractMetadata:success', {
+      documentType,
+      fileId,
+      fileName,
+    });
+
     return parsed;
   } catch (error) {
     console.error('Metadata extraction failed:', error);
+    logOpenAI('extractMetadata:error', {
+      error:
+        error instanceof Error
+          ? { message: error.message, stack: error.stack }
+          : error,
+    });
     return null;
   }
 }
@@ -147,7 +166,7 @@ router.post(
       let metadata: DocumentMetadata | null = null;
 
       if (!asyncMode) {
-        // 2) Extract structured metadata using the templates and file.
+        // 2) Extract structured metadata using the templates and file (synchronous path).
         metadata = await extractMetadata(
           document_type,
           file.id,
@@ -213,6 +232,113 @@ router.post(
         console.error('Failed to persist document metadata to DB:', err);
       }
 
+      // For async uploads, kick off background metadata extraction so the caller
+      // does not have to visit the metadata page to populate it.
+      if (asyncMode) {
+        (async () => {
+          try {
+            logOpenAI('backgroundMetadata:start', {
+              documentType: document_type,
+              fileId: file.id,
+              vectorStoreFileId: vectorStoreFile.id,
+            });
+
+            const bgMetadata = await extractMetadata(
+              document_type,
+              file.id,
+              originalname,
+            );
+
+            if (!bgMetadata) {
+              logOpenAI('backgroundMetadata:skip', {
+                reason: 'extractMetadata returned null',
+                documentType: document_type,
+                fileId: file.id,
+                vectorStoreFileId: vectorStoreFile.id,
+              });
+              return;
+            }
+
+            const updatedAttributes: {
+              [key: string]: string | number | boolean;
+            } = {
+              ...attributes,
+            };
+
+            if (bgMetadata.date) {
+              updatedAttributes.date = bgMetadata.date;
+            }
+            if (bgMetadata.provider_name) {
+              updatedAttributes.provider_name = bgMetadata.provider_name;
+            }
+            if (bgMetadata.clinic_or_facility) {
+              updatedAttributes.clinic_or_facility =
+                bgMetadata.clinic_or_facility;
+            }
+            updatedAttributes.has_metadata = true;
+
+            if (config.vectorStoreId) {
+              await openai.vectorStores.files.update(vectorStoreFile.id, {
+                vector_store_id: config.vectorStoreId,
+                attributes: updatedAttributes,
+              });
+            }
+
+            try {
+              const db = await getDb();
+              const dateValue = bgMetadata.date
+                ? bgMetadata.date.slice(0, 10)
+                : null;
+
+              await db.query(
+                `
+                UPDATE documents
+                SET
+                  date = ?,
+                  provider_name = ?,
+                  clinic_or_facility = ?,
+                  metadata_json = ?
+                WHERE vector_store_file_id = ?
+              `,
+                [
+                  dateValue,
+                  bgMetadata.provider_name ?? null,
+                  bgMetadata.clinic_or_facility ?? null,
+                  JSON.stringify(bgMetadata),
+                  vectorStoreFile.id,
+                ],
+              );
+            } catch (err) {
+              console.error(
+                'Failed to persist background metadata to DB:',
+                err,
+              );
+              logOpenAI('backgroundMetadata:db_error', {
+                error:
+                  err instanceof Error
+                    ? { message: err.message, stack: err.stack }
+                    : err,
+                vectorStoreFileId: vectorStoreFile.id,
+              });
+            }
+
+            logOpenAI('backgroundMetadata:success', {
+              documentType: document_type,
+              fileId: file.id,
+              vectorStoreFileId: vectorStoreFile.id,
+            });
+          } catch (err) {
+            console.error('Background metadata extraction failed:', err);
+            logOpenAI('backgroundMetadata:error', {
+              error:
+                err instanceof Error
+                  ? { message: err.message, stack: err.stack }
+                  : err,
+            });
+          }
+        })();
+      }
+
       res.status(201).json({
         fileId: file.id,
         vectorStoreFileId: vectorStoreFile.id,
@@ -254,6 +380,106 @@ router.get('/', requireAuth, async (_req: Request, res: Response) => {
   } catch (error) {
     console.error('Error in GET /api/documents:', error);
     res.status(500).json({ error: 'Failed to list documents' });
+  }
+});
+
+// GET /api/documents/db
+// List documents from the local MariaDB snapshot (fast path for the UI).
+router.get('/db', requireAuth, async (_req: Request, res: Response) => {
+  try {
+    const db = await getDb();
+    const [rows] = (await db.query(
+      `
+        SELECT
+          vector_store_file_id,
+          openai_file_id,
+          filename,
+          document_type,
+          date,
+          provider_name,
+          clinic_or_facility,
+          is_active,
+          metadata_json,
+          s3_key
+        FROM documents
+        ORDER BY created_at DESC
+      `,
+    )) as any[];
+
+    if (!Array.isArray(rows)) {
+      res.json({ items: [] });
+      return;
+    }
+
+    const items = (rows as any[]).map((row) => {
+      const vectorStoreFileId = row.vector_store_file_id as string;
+      const openaiFileId = row.openai_file_id as string;
+      const filename = row.filename as string;
+      const documentType = row.document_type as string;
+      const dateValue = row.date as Date | string | null;
+      const providerName = (row.provider_name as string | null) ?? '';
+      const clinicOrFacility = (row.clinic_or_facility as string | null) ?? '';
+      const isActiveRaw = row.is_active as number | boolean | null;
+      const s3Key = (row.s3_key as string | null) ?? undefined;
+
+      let metadataRaw = row.metadata_json;
+      if (typeof metadataRaw === 'string') {
+        try {
+          metadataRaw = JSON.parse(metadataRaw);
+        } catch {
+          metadataRaw = null;
+        }
+      }
+
+      const hasMetadata =
+        metadataRaw && typeof metadataRaw === 'object'
+          ? Object.keys(metadataRaw).length > 0
+          : false;
+
+      const attributes: { [key: string]: string | number | boolean } = {
+        file_id: openaiFileId,
+        file_name: filename,
+        document_type: documentType,
+        is_active: isActiveRaw === 1 || isActiveRaw === true,
+      };
+
+      if (dateValue) {
+        const iso =
+          typeof dateValue === 'string'
+            ? dateValue
+            : (dateValue as Date).toISOString().slice(0, 10);
+        attributes.date = iso;
+      }
+
+      if (providerName) {
+        attributes.provider_name = providerName;
+      }
+
+      if (clinicOrFacility) {
+        attributes.clinic_or_facility = clinicOrFacility;
+      }
+
+      if (s3Key) {
+        attributes.s3_key = s3Key;
+      }
+
+      if (hasMetadata) {
+        attributes.has_metadata = true;
+      }
+
+      return {
+        id: vectorStoreFileId,
+        vectorStoreId: config.vectorStoreId ?? null,
+        status: hasMetadata ? 'completed' : 'in_progress',
+        usageBytes: 0,
+        attributes,
+      };
+    });
+
+    res.json({ items });
+  } catch (error) {
+    console.error('Error in GET /api/documents/db:', error);
+    res.status(500).json({ error: 'Failed to list documents from DB' });
   }
 });
 
