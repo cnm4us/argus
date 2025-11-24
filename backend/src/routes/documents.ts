@@ -162,6 +162,7 @@ router.post(
           if (metadata.clinic_or_facility) {
             attributes.clinic_or_facility = metadata.clinic_or_facility;
           }
+          attributes.has_metadata = true;
         }
       }
 
@@ -494,6 +495,7 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
     if (metadata.clinic_or_facility) {
       updatedAttributes.clinic_or_facility = metadata.clinic_or_facility;
     }
+    updatedAttributes.has_metadata = true;
 
     await openai.vectorStores.files.update(id, {
       vector_store_id: config.vectorStoreId,

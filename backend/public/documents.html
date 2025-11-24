@@ -157,7 +157,7 @@
 
       function statusClass(status) {
         if (status === 'completed') return 'status-completed';
-        if (status === 'in_progress') return 'status-in_progress';
+        if (status === 'processing') return 'status-in_progress';
         if (status === 'failed') return 'status-failed';
         return 'status-default';
       }
@@ -192,10 +192,13 @@
             const tr = document.createElement('tr');
             const attrs = item.attributes || {};
 
+            const hasMetadata = !!attrs.has_metadata;
+            const displayStatus = hasMetadata ? 'completed' : 'processing';
+
             const statusTd = document.createElement('td');
             const pill = document.createElement('span');
-            pill.className = 'status-pill ' + statusClass(item.status);
-            pill.textContent = item.status;
+            pill.className = 'status-pill ' + statusClass(displayStatus);
+            pill.textContent = displayStatus;
             statusTd.appendChild(pill);
             tr.appendChild(statusTd);
 
