@@ -1,6 +1,7 @@
 export const DOCUMENT_TYPES = [
   'office_visit',
   'telehealth_visit',
+  'telephone_visit',
   'telephone_encounter',
   'medication_refill',
   'imaging_report',
@@ -158,4 +159,3 @@ export interface DocumentMetadata
     CommunicationMetadata,
     LegalRiskMetadata,
     AdditionalMetadata {}
-
