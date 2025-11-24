@@ -174,33 +174,32 @@ source scripts/set_password
 
 After this, `$APP_PASSWORD` is available to your `curl` commands and the `scripts/openai` helper.
 
-### 2. `scripts/openai` wrapper
+### 2. `scripts/openai` (direct OpenAI helper)
 
-The `scripts/openai` script wraps the main document API operations. It assumes:
+The `scripts/openai` script talks **directly to OpenAI** (vector stores + files), bypassing the Argus backend. It is intended for debugging the actual asset state in OpenAI and comparing it with what the app reports.
 
-- `APP_PASSWORD` is set (via `source scripts/set_password`),
-- `BASE_URL` is `http://localhost:4000` by default (override with `export BASE_URL=...` if needed).
+It assumes:
+
+- `OPENAI_API_KEY` and `ARGUS_VECTOR_STORE_ID` / `VECTOR_STORE_ID` are set in the environment, **or**
+- It will read them from `backend/.env` if present.
 
 Usage:
 
 ```bash
-# Upload and ingest a document (sync mode)
-scripts/openai upload <document_type> <path-from-repo-root>
-
-# Example:
-scripts/openai upload telehealth_visit test_pdfs/COS-00001-001.pdf
-
-# List documents
+# List raw vector store files directly from OpenAI
 scripts/openai list documents
 
-# Get document details
+# Inspect a single vector store file
 scripts/openai get details <vectorStoreFileId>
 
-# Soft delete
+# Soft delete (update attributes.is_active=false on the OpenAI vector store file)
 scripts/openai soft-delete <vectorStoreFileId>
 
-# Hard delete
+# Hard delete (detach from vector store and delete the underlying OpenAI File)
 scripts/openai hard-delete <vectorStoreFileId>
+
+# Attach a local PDF to the vector store without going through the app
+scripts/openai upload <document_type> <path-from-repo-root>
 ```
 
-The script prints the raw JSON responses from the backend, matching the underlying API endpoints.
+This helper is useful when you want to verify OpenAI’s ground truth (e.g., file status, attributes, deletion) independently of Argus’s database or S3 state.

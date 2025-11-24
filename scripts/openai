@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
-# Simple CLI wrapper for Argus backend APIs.
+# Direct CLI wrapper for OpenAI vector store + files APIs.
+# This script talks to OpenAI directly and does NOT go through the Argus backend.
+#
 # Usage (from repo root):
 #   scripts/openai upload <document_type> <path-from-repo-root>
 #   scripts/openai list documents
@@ -8,20 +10,39 @@
 #   scripts/openai soft-delete <vectorStoreFileId>
 #   scripts/openai hard-delete <vectorStoreFileId>
 #
-# Requires APP_PASSWORD to be set in the shell, e.g.:
-#   source scripts/set_password
+# Configuration:
+#   - Reads OPENAI_API_KEY and ARGUS_VECTOR_STORE_ID from the environment if set.
+#   - Otherwise, attempts to read them from backend/.env.
 
 set -euo pipefail
 
-BASE_URL="${BASE_URL:-http://localhost:4000}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="$ROOT_DIR/backend/.env"
 
-if [[ -z "${APP_PASSWORD:-}" ]]; then
-  echo "APP_PASSWORD is not set in this shell." >&2
-  echo "Run 'source scripts/set_password' first." >&2
+OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+VECTOR_STORE_ID="${VECTOR_STORE_ID:-${ARGUS_VECTOR_STORE_ID:-}}"
+
+if [[ -z "$OPENAI_API_KEY" && -f "$ENV_FILE" ]]; then
+  OPENAI_API_KEY="$(grep '^OPENAI_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)"
+fi
+
+if [[ -z "$VECTOR_STORE_ID" && -f "$ENV_FILE" ]]; then
+  VECTOR_STORE_ID="$(grep '^ARGUS_VECTOR_STORE_ID=' "$ENV_FILE" | cut -d= -f2- || true)"
+fi
+
+if [[ -z "$OPENAI_API_KEY" ]]; then
+  echo "OPENAI_API_KEY is not set and could not be read from backend/.env" >&2
   exit 1
 fi
 
-AUTH_HEADER="Authorization: Bearer $APP_PASSWORD"
+if [[ -z "$VECTOR_STORE_ID" ]]; then
+  echo "ARGUS_VECTOR_STORE_ID / VECTOR_STORE_ID is not set and could not be read from backend/.env" >&2
+  exit 1
+fi
+
+API_BASE="${OPENAI_API_BASE:-https://api.openai.com/v1}"
+AUTH_HEADER="Authorization: Bearer $OPENAI_API_KEY"
+BETA_HEADER="OpenAI-Beta: assistants=v2"
 
 cmd="${1:-}"
 shift || true
@@ -38,10 +59,47 @@ case "$cmd" in
       echo "File not found: $file_path" >&2
       exit 1
     fi
-    curl -sS -X POST "$BASE_URL/api/documents" \
-      -H "$AUTH_HEADER" \
-      -F "file=@$file_path" \
-      -F "document_type=$doc_type"
+    if ! command -v jq >/dev/null 2>&1; then
+      echo "The 'jq' command is required for upload (to parse JSON)." >&2
+      exit 1
+    fi
+
+    # 1) Upload raw file to OpenAI Files.
+    file_res="$(
+      curl -sS -X POST "$API_BASE/files" \
+        -H "$AUTH_HEADER" \
+        -F "file=@$file_path" \
+        -F "purpose=assistants"
+    )"
+
+    file_id="$(echo "$file_res" | jq -r '.id // empty')"
+    if [[ -z "$file_id" ]]; then
+      echo "Failed to parse file id from OpenAI /files response:" >&2
+      echo "$file_res" >&2
+      exit 1
+    fi
+
+    file_name="$(basename "$file_path")"
+
+    # 2) Attach to the configured vector store with minimal attributes.
+    vs_body="$(
+      jq -n \
+        --arg file_id "$file_id" \
+        --arg doc_type "$doc_type" \
+        --arg file_name "$file_name" \
+        '{file_id: $file_id, attributes: {document_type: $doc_type, file_name: $file_name, file_id: $file_id}}'
+    )"
+
+    vs_res="$(
+      curl -sS -X POST "$API_BASE/vector_stores/$VECTOR_STORE_ID/files" \
+        -H "$AUTH_HEADER" \
+        -H "$BETA_HEADER" \
+        -H "Content-Type: application/json" \
+        -d "$vs_body"
+    )"
+
+    # Return both responses so you can inspect file + vector store state.
+    echo "{\"file\":$file_res,\"vector_store_file\":$vs_res}"
     ;;
 
   list)
@@ -50,8 +108,9 @@ case "$cmd" in
       echo "Usage: scripts/openai list documents" >&2
       exit 1
     fi
-    curl -sS "$BASE_URL/api/documents" \
-      -H "$AUTH_HEADER"
+    curl -sS -X GET "$API_BASE/vector_stores/$VECTOR_STORE_ID/files?order=desc" \
+      -H "$AUTH_HEADER" \
+      -H "$BETA_HEADER"
     ;;
 
   get)
@@ -65,8 +124,9 @@ case "$cmd" in
       echo "Usage: scripts/openai get details <vectorStoreFileId>" >&2
       exit 1
     fi
-    curl -sS "$BASE_URL/api/documents/$id" \
-      -H "$AUTH_HEADER"
+    curl -sS -X GET "$API_BASE/vector_stores/$VECTOR_STORE_ID/files/$id" \
+      -H "$AUTH_HEADER" \
+      -H "$BETA_HEADER"
     ;;
 
   soft-delete)
@@ -75,8 +135,32 @@ case "$cmd" in
       echo "Usage: scripts/openai soft-delete <vectorStoreFileId>" >&2
       exit 1
     fi
-    curl -sS -X POST "$BASE_URL/api/documents/$id/soft-delete" \
-      -H "$AUTH_HEADER"
+    if ! command -v jq >/dev/null 2>&1; then
+      echo "The 'jq' command is required for soft-delete (to merge attributes)." >&2
+      exit 1
+    fi
+
+    file_json="$(
+      curl -sS -X GET "$API_BASE/vector_stores/$VECTOR_STORE_ID/files/$id" \
+        -H "$AUTH_HEADER" \
+        -H "$BETA_HEADER"
+    )"
+
+    # If OpenAI returned an error, just echo it back.
+    if echo "$file_json" | jq -e 'has("error")' >/dev/null 2>&1; then
+      echo "$file_json"
+      exit 1
+    fi
+
+    update_body="$(
+      echo "$file_json" | jq '{attributes: ((.attributes // {}) + {is_active: false})}'
+    )"
+
+    curl -sS -X POST "$API_BASE/vector_stores/$VECTOR_STORE_ID/files/$id" \
+      -H "$AUTH_HEADER" \
+      -H "$BETA_HEADER" \
+      -H "Content-Type: application/json" \
+      -d "$update_body"
     ;;
 
   hard-delete)
@@ -85,8 +169,19 @@ case "$cmd" in
       echo "Usage: scripts/openai hard-delete <vectorStoreFileId>" >&2
       exit 1
     fi
-    curl -sS -X DELETE "$BASE_URL/api/documents/$id" \
-      -H "$AUTH_HEADER"
+
+    vs_delete="$(
+      curl -sS -X DELETE "$API_BASE/vector_stores/$VECTOR_STORE_ID/files/$id" \
+        -H "$AUTH_HEADER" \
+        -H "$BETA_HEADER"
+    )"
+
+    file_delete="$(
+      curl -sS -X DELETE "$API_BASE/files/$id" \
+        -H "$AUTH_HEADER"
+    )"
+
+    echo "{\"vectorStoreFileDeleted\":$vs_delete,\"fileDeleted\":$file_delete}"
     ;;
 
   *)
