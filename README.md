@@ -156,7 +156,51 @@ For quick manual testing, the backend serves a minimal HTML upload form:
 
 The form:
 
-- Prompts for the Argus password (`APP_PASSWORD`),
 - Lets you choose a `document_type` and a PDF file,
-- Calls `POST /api/documents`,
-- Displays the JSON response (including extracted metadata) inline.
+- Calls `POST /api/documents?async=1`,
+- Displays the JSON response (IDs and status) inline.
+
+## Developer CLI helpers
+
+From the repo root, there are simple helper scripts in `scripts/` to avoid retyping passwords and curl commands.
+
+### 1. Set `APP_PASSWORD` in your shell
+
+Loads `APP_PASSWORD` from `backend/.env` into the current shell:
+
+```bash
+source scripts/set_password
+```
+
+After this, `$APP_PASSWORD` is available to your `curl` commands and the `scripts/openai` helper.
+
+### 2. `scripts/openai` wrapper
+
+The `scripts/openai` script wraps the main document API operations. It assumes:
+
+- `APP_PASSWORD` is set (via `source scripts/set_password`),
+- `BASE_URL` is `http://localhost:4000` by default (override with `export BASE_URL=...` if needed).
+
+Usage:
+
+```bash
+# Upload and ingest a document (sync mode)
+scripts/openai upload <document_type> <path-from-repo-root>
+
+# Example:
+scripts/openai upload telehealth_visit test_pdfs/COS-00001-001.pdf
+
+# List documents
+scripts/openai list documents
+
+# Get document details
+scripts/openai get details <vectorStoreFileId>
+
+# Soft delete
+scripts/openai soft-delete <vectorStoreFileId>
+
+# Hard delete
+scripts/openai hard-delete <vectorStoreFileId>
+```
+
+The script prints the raw JSON responses from the backend, matching the underlying API endpoints.

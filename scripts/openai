@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+
+# Simple CLI wrapper for Argus backend APIs.
+# Usage (from repo root):
+#   scripts/openai upload <document_type> <path-from-repo-root>
+#   scripts/openai list documents
+#   scripts/openai get details <vectorStoreFileId>
+#   scripts/openai soft-delete <vectorStoreFileId>
+#   scripts/openai hard-delete <vectorStoreFileId>
+#
+# Requires APP_PASSWORD to be set in the shell, e.g.:
+#   source scripts/set_password
+
+set -euo pipefail
+
+BASE_URL="${BASE_URL:-http://localhost:4000}"
+
+if [[ -z "${APP_PASSWORD:-}" ]]; then
+  echo "APP_PASSWORD is not set in this shell." >&2
+  echo "Run 'source scripts/set_password' first." >&2
+  exit 1
+fi
+
+AUTH_HEADER="Authorization: Bearer $APP_PASSWORD"
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  upload)
+    doc_type="${1:-}"
+    file_path="${2:-}"
+    if [[ -z "$doc_type" || -z "$file_path" ]]; then
+      echo "Usage: scripts/openai upload <document_type> <path-from-repo-root>" >&2
+      exit 1
+    fi
+    if [[ ! -f "$file_path" ]]; then
+      echo "File not found: $file_path" >&2
+      exit 1
+    fi
+    curl -sS -X POST "$BASE_URL/api/documents" \
+      -H "$AUTH_HEADER" \
+      -F "file=@$file_path" \
+      -F "document_type=$doc_type"
+    ;;
+
+  list)
+    sub="${1:-}"
+    if [[ "$sub" != "documents" ]]; then
+      echo "Usage: scripts/openai list documents" >&2
+      exit 1
+    fi
+    curl -sS "$BASE_URL/api/documents" \
+      -H "$AUTH_HEADER"
+    ;;
+
+  get)
+    sub="${1:-}"
+    if [[ "$sub" != "details" ]]; then
+      echo "Usage: scripts/openai get details <vectorStoreFileId>" >&2
+      exit 1
+    fi
+    id="${2:-}"
+    if [[ -z "$id" ]]; then
+      echo "Usage: scripts/openai get details <vectorStoreFileId>" >&2
+      exit 1
+    fi
+    curl -sS "$BASE_URL/api/documents/$id" \
+      -H "$AUTH_HEADER"
+    ;;
+
+  soft-delete)
+    id="${1:-}"
+    if [[ -z "$id" ]]; then
+      echo "Usage: scripts/openai soft-delete <vectorStoreFileId>" >&2
+      exit 1
+    fi
+    curl -sS -X POST "$BASE_URL/api/documents/$id/soft-delete" \
+      -H "$AUTH_HEADER"
+    ;;
+
+  hard-delete)
+    id="${1:-}"
+    if [[ -z "$id" ]]; then
+      echo "Usage: scripts/openai hard-delete <vectorStoreFileId>" >&2
+      exit 1
+    fi
+    curl -sS -X DELETE "$BASE_URL/api/documents/$id" \
+      -H "$AUTH_HEADER"
+    ;;
+
+  *)
+    echo "Usage:" >&2
+    echo "  scripts/openai upload <document_type> <path-from-repo-root>" >&2
+    echo "  scripts/openai list documents" >&2
+    echo "  scripts/openai get details <vectorStoreFileId>" >&2
+    echo "  scripts/openai soft-delete <vectorStoreFileId>" >&2
+    echo "  scripts/openai hard-delete <vectorStoreFileId>" >&2
+    exit 1
+    ;;
+esac
+
