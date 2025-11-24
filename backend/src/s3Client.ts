@@ -1,4 +1,9 @@
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+} from '@aws-sdk/client-s3';
 import type { Readable } from 'stream';
 import { config } from './config';
 
@@ -63,3 +68,19 @@ export async function getPdfStreamFromS3(
   return { stream, filename };
 }
 
+export async function deleteObjectFromS3(key: string): Promise<void> {
+  if (!config.s3Bucket) {
+    return;
+  }
+
+  try {
+    await s3.send(
+      new DeleteObjectCommand({
+        Bucket: config.s3Bucket,
+        Key: key,
+      }),
+    );
+  } catch (err) {
+    console.warn('Failed to delete object from S3', key, err);
+  }
+}

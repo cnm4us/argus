@@ -12,7 +12,7 @@ import {
 } from '../documentTypes';
 import { loadTemplateForDocumentType } from '../templates';
 import { getDb } from '../db';
-import { uploadPdfToS3 } from '../s3Client';
+import { uploadPdfToS3, deleteObjectFromS3 } from '../s3Client';
 
 const router = express.Router();
 
@@ -275,7 +275,13 @@ router.delete('/:id', requireAuth, async (req: Request, res: Response) => {
 
     const attributes = file.attributes ?? {};
     const underlyingFileId =
-      typeof attributes.file_id === 'string' ? (attributes.file_id as string) : undefined;
+      typeof attributes.file_id === 'string'
+        ? (attributes.file_id as string)
+        : undefined;
+    const s3Key =
+      typeof (attributes as any).s3_key === 'string'
+        ? ((attributes as any).s3_key as string)
+        : undefined;
 
     // Detach from vector store.
     const deleted = await openai.vectorStores.files.delete(id, {
@@ -292,6 +298,13 @@ router.delete('/:id', requireAuth, async (req: Request, res: Response) => {
       }
     }
 
+    // Best-effort delete of the S3 object, if present.
+    let s3DeleteAttempted = false;
+    if (s3Key) {
+      s3DeleteAttempted = true;
+      await deleteObjectFromS3(s3Key);
+    }
+
     // Best-effort delete of DB row.
     try {
       const db = await getDb();
@@ -306,6 +319,7 @@ router.delete('/:id', requireAuth, async (req: Request, res: Response) => {
       ok: true,
       vectorStoreFileDeleted: deleted,
       underlyingFileDeleted: fileDeleteResult,
+      s3DeleteAttempted,
     });
   } catch (error) {
     console.error('Error in DELETE /api/documents/:id:', error);
