@@ -387,8 +387,64 @@ router.get('/:id', requireAuth, async (req: Request, res: Response) => {
   }
 });
 
+async function getMetadataFromDb(
+  vectorStoreFileId: string,
+): Promise<DocumentMetadata | null> {
+  try {
+    const db = await getDb();
+    const [rows] = (await db.query(
+      'SELECT metadata_json FROM documents WHERE vector_store_file_id = ? LIMIT 1',
+      [vectorStoreFileId],
+    )) as any[];
+
+    if (Array.isArray(rows) && rows.length > 0) {
+      const row = rows[0] as any;
+      let raw = row.metadata_json;
+
+      // In MariaDB, JSON columns may come back as strings; parse if needed.
+      if (typeof raw === 'string') {
+        try {
+          raw = JSON.parse(raw);
+        } catch {
+          raw = null;
+        }
+      }
+
+      if (raw && typeof raw === 'object' && Object.keys(raw).length > 0) {
+        return raw as DocumentMetadata;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to read metadata from DB:', err);
+  }
+
+  return null;
+}
+
+// GET /api/documents/:id/metadata/db
+// Return metadata only from the local DB snapshot, without calling OpenAI.
+router.get(
+  '/:id/metadata/db',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const metadata = await getMetadataFromDb(id);
+      if (!metadata) {
+        res.status(404).json({ error: 'No metadata stored for this document' });
+        return;
+      }
+
+      res.json({ metadata });
+    } catch (error) {
+      console.error('Error in GET /api/documents/:id/metadata/db:', error);
+      res.status(500).json({ error: 'Failed to read metadata from DB' });
+    }
+  },
+);
+
 // GET /api/documents/:id/metadata
-// Run metadata extraction on demand for a given vector store file.
+// Run metadata extraction on demand for a given vector store file and persist it.
 router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => {
   try {
     if (!config.vectorStoreId) {
@@ -397,38 +453,6 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
     }
 
     const { id } = req.params;
-
-    // Fast path: if we already have metadata in the DB, return it without
-    // re-calling OpenAI.
-    try {
-      const db = await getDb();
-      const [rows] = (await db.query(
-        'SELECT metadata_json FROM documents WHERE vector_store_file_id = ? LIMIT 1',
-        [id],
-      )) as any[];
-
-      if (Array.isArray(rows) && rows.length > 0) {
-        const row = rows[0] as any;
-        let raw = row.metadata_json;
-
-        // In MariaDB, JSON columns may come back as strings; parse if needed.
-        if (typeof raw === 'string') {
-          try {
-            raw = JSON.parse(raw);
-          } catch {
-            // If parsing fails, treat as missing and fall through to OpenAI.
-            raw = null;
-          }
-        }
-
-        if (raw && typeof raw === 'object' && Object.keys(raw).length > 0) {
-          res.json({ metadata: raw });
-          return;
-        }
-      }
-    } catch (err) {
-      console.error('Failed to read metadata from DB, falling back to OpenAI:', err);
-    }
 
     const file = await openai.vectorStores.files.retrieve(id, {
       vector_store_id: config.vectorStoreId,

@@ -12,12 +12,51 @@ import searchRouter from './routes/search';
 import filesRouter from './routes/files';
 import authRouter from './routes/auth';
 import { initDb } from './db';
+import { SESSION_COOKIE_NAME, verifySessionToken } from './session';
 
 const app = express();
 
 app.use(cors());
 app.use(cookieParser());
 app.use(express.json());
+
+// Require a valid session cookie for all non-API pages except the login page
+// and static assets. APIs continue to use bearer token or session via
+// requireAuth.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    next();
+    return;
+  }
+
+  const isLoginPage = req.path === '/login.html';
+  const isRoot = req.path === '/';
+  const isStaticAsset =
+    /\.(css|js|png|jpg|jpeg|svg|ico|map)$/.test(req.path);
+
+  if (isLoginPage || isStaticAsset) {
+    next();
+    return;
+  }
+
+  const token = (req as any).cookies?.[SESSION_COOKIE_NAME] as
+    | string
+    | undefined;
+
+  if (token && verifySessionToken(token)) {
+    next();
+    return;
+  }
+
+  // For root path, redirect straight to login.
+  if (isRoot) {
+    res.redirect('/login.html');
+    return;
+  }
+
+  // Any other non-API URL without a valid session goes to login.
+  res.redirect('/login.html');
+});
 
 // Serve simple static assets (e.g., upload and list pages) from /public.
 app.use(

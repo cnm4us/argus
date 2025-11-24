@@ -12,6 +12,22 @@
         padding: 1.5rem;
         background: #f5f5f5;
       }
+      .navbar {
+        background: #111827;
+        color: #e5e7eb;
+        padding: 0.5rem 1rem;
+        display: flex;
+        gap: 1rem;
+      }
+      .navbar a {
+        color: #e5e7eb;
+        text-decoration: none;
+        font-size: 0.9rem;
+      }
+      .navbar a.active {
+        font-weight: 600;
+        text-decoration: underline;
+      }
       .container {
         max-width: 480px;
         margin: 0 auto;
@@ -70,6 +86,11 @@
     </style>
   </head>
   <body>
+    <div class="navbar">
+      <a href="/login.html" class="active">Login</a>
+      <a href="/documents.html">Documents</a>
+      <a href="/search.html">Search (coming soon)</a>
+    </div>
     <div class="container">
       <h1>Argus – Login</h1>
       <p>
@@ -88,7 +109,6 @@
       <div id="status" class="status"></div>
 
       <div class="links">
-        <div><a href="/upload.html">Upload document</a></div>
         <div><a href="/documents.html">View documents</a></div>
       </div>
     </div>
@@ -168,4 +188,3 @@
     </script>
   </body>
   </html>
-

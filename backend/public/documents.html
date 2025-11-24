@@ -12,6 +12,22 @@
         padding: 1.5rem;
         background: #f5f5f5;
       }
+      .navbar {
+        background: #111827;
+        color: #e5e7eb;
+        padding: 0.5rem 1rem;
+        display: flex;
+        gap: 1rem;
+      }
+      .navbar a {
+        color: #e5e7eb;
+        text-decoration: none;
+        font-size: 0.9rem;
+      }
+      .navbar a.active {
+        font-weight: 600;
+        text-decoration: underline;
+      }
       .container {
         max-width: 960px;
         margin: 0 auto;
@@ -86,6 +102,9 @@
         cursor: pointer;
         font: inherit;
       }
+      button.danger {
+        background: #b91c1c;
+      }
       button:disabled {
         background: #9ca3af;
         cursor: default;
@@ -100,15 +119,18 @@
     </style>
   </head>
   <body>
+    <div class="navbar">
+      <a href="/login.html">Login</a>
+      <a href="/documents.html" class="active">Documents</a>
+      <a href="/search.html">Search (coming soon)</a>
+    </div>
     <div class="container">
       <h1>Argus – Documents</h1>
       <p>List of ingested documents and their current status.</p>
 
       <div class="controls">
         <button id="refresh-btn">Refresh</button>
-        <span style="font-size: 0.85rem; color: #4b5563"
-          >(Requires login via <code>/login.html</code>.)</span
-        >
+        <button id="upload-btn">Upload</button>
       </div>
       <div id="status" class="status-line"></div>
 
@@ -129,6 +151,7 @@
 
     <script>
       const refreshBtn = document.getElementById('refresh-btn');
+      const uploadBtn = document.getElementById('upload-btn');
       const statusEl = document.getElementById('status');
       const tableBody = document.getElementById('table-body');
 
@@ -191,7 +214,17 @@
             tr.appendChild(fileNameTd);
 
             const docTypeTd = document.createElement('td');
-            docTypeTd.textContent = attrs.document_type || '';
+            const docType = attrs.document_type || '';
+            if (docType) {
+              const link = document.createElement('a');
+              link.href = `/document-metadata.html?id=${encodeURIComponent(
+                item.id,
+              )}`;
+              link.textContent = docType;
+              docTypeTd.appendChild(link);
+            } else {
+              docTypeTd.textContent = '';
+            }
             tr.appendChild(docTypeTd);
 
             const dateTd = document.createElement('td');
@@ -203,12 +236,38 @@
             tr.appendChild(providerTd);
 
             const actionsTd = document.createElement('td');
-            const metaLink = document.createElement('a');
-            metaLink.href = `/document-metadata.html?id=${encodeURIComponent(
-              item.id,
-            )}`;
-            metaLink.textContent = 'Metadata';
-            actionsTd.appendChild(metaLink);
+            const deleteBtn = document.createElement('button');
+            deleteBtn.textContent = 'Delete';
+            deleteBtn.className = 'danger';
+            deleteBtn.addEventListener('click', async () => {
+              if (
+                !confirm(
+                  `Delete document "${filename}"? This will remove it from search and delete the stored metadata.`,
+                )
+              ) {
+                return;
+              }
+
+              try {
+                const res = await fetch(
+                  `/api/documents/${encodeURIComponent(item.id)}`,
+                  { method: 'DELETE' },
+                );
+                const json = await res.json().catch(() => null);
+                if (!res.ok) {
+                  alert(
+                    'Delete failed: ' +
+                      (json && json.error ? json.error : res.status),
+                  );
+                } else {
+                  loadDocuments();
+                }
+              } catch (err) {
+                console.error(err);
+                alert('Unexpected error deleting document.');
+              }
+            });
+            actionsTd.appendChild(deleteBtn);
             tr.appendChild(actionsTd);
 
             tableBody.appendChild(tr);
@@ -224,6 +283,10 @@
 
       refreshBtn.addEventListener('click', () => {
         loadDocuments();
+      });
+
+      uploadBtn.addEventListener('click', () => {
+        window.location.href = '/upload.html';
       });
 
       // Initial load

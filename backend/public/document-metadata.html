@@ -12,6 +12,22 @@
         padding: 1.5rem;
         background: #f5f5f5;
       }
+      .navbar {
+        background: #111827;
+        color: #e5e7eb;
+        padding: 0.5rem 1rem;
+        display: flex;
+        gap: 1rem;
+      }
+      .navbar a {
+        color: #e5e7eb;
+        text-decoration: none;
+        font-size: 0.9rem;
+      }
+      .navbar a.active {
+        font-weight: 600;
+        text-decoration: underline;
+      }
       .container {
         max-width: 960px;
         margin: 0 auto;
@@ -64,6 +80,11 @@
     </style>
   </head>
   <body>
+    <div class="navbar">
+      <a href="/login.html">Login</a>
+      <a href="/documents.html">Documents</a>
+      <a href="/search.html">Search (coming soon)</a>
+    </div>
     <div class="container">
       <h1>Argus – Document Metadata</h1>
       <p>
@@ -73,9 +94,6 @@
 
       <div class="controls">
         <button id="load-btn">Load metadata</button>
-        <span style="font-size: 0.85rem; color: #4b5563"
-          >(Requires login via <code>/login.html</code>.)</span
-        >
       </div>
 
       <div id="status" class="status-line"></div>
@@ -89,10 +107,16 @@
       }
 
       const loadBtn = document.getElementById('load-btn');
+      const generateBtn = document.createElement('button');
+      generateBtn.textContent = 'Generate metadata';
+      generateBtn.id = 'generate-btn';
       const statusEl = document.getElementById('status');
       const metadataEl = document.getElementById('metadata');
 
-      async function loadMetadata() {
+      // Insert the generate button next to the load button.
+      loadBtn.insertAdjacentElement('afterend', generateBtn);
+
+      async function loadMetadataFromDb() {
         const id = getVectorStoreFileId();
 
         if (!id) {
@@ -100,9 +124,61 @@
           statusEl.className = 'status-line error';
           return;
         }
-        statusEl.textContent = 'Requesting metadata… this may take 30–60 seconds.';
+        statusEl.textContent = 'Loading stored metadata (DB)…';
         statusEl.className = 'status-line';
         loadBtn.disabled = true;
+        generateBtn.disabled = true;
+        metadataEl.hidden = true;
+        metadataEl.textContent = '';
+
+        try {
+          const res = await fetch(
+            `/api/documents/${encodeURIComponent(id)}/metadata/db`,
+          );
+
+          const json = await res.json();
+          if (!res.ok) {
+            if (res.status === 404) {
+              statusEl.textContent =
+                'No stored metadata found. Use "Generate metadata" to create it.';
+              statusEl.className = 'status-line';
+            } else {
+              statusEl.textContent =
+                'Error loading metadata: ' + (json.error || res.status);
+              statusEl.className = 'status-line error';
+            }
+            return;
+          }
+
+          statusEl.textContent = 'Metadata loaded from DB.';
+          statusEl.className = 'status-line';
+          metadataEl.hidden = false;
+          const metadataOnly = json && json.metadata ? json.metadata : json;
+          metadataEl.textContent = JSON.stringify(metadataOnly, null, 2);
+        } catch (err) {
+          console.error(err);
+          statusEl.textContent = 'Unexpected error loading metadata.';
+          statusEl.className = 'status-line error';
+        } finally {
+          loadBtn.disabled = false;
+          generateBtn.disabled = false;
+        }
+      }
+
+      async function generateMetadata() {
+        const id = getVectorStoreFileId();
+
+        if (!id) {
+          statusEl.textContent = 'Missing document id in query string (?id=...).';
+          statusEl.className = 'status-line error';
+          return;
+        }
+
+        statusEl.textContent =
+          'Generating metadata via OpenAI… this may take 30–60 seconds.';
+        statusEl.className = 'status-line';
+        loadBtn.disabled = true;
+        generateBtn.disabled = true;
         metadataEl.hidden = true;
         metadataEl.textContent = '';
 
@@ -114,26 +190,31 @@
           const json = await res.json();
           if (!res.ok) {
             statusEl.textContent =
-              'Error loading metadata: ' + (json.error || res.status);
+              'Error generating metadata: ' + (json.error || res.status);
             statusEl.className = 'status-line error';
             return;
           }
 
-          statusEl.textContent = 'Metadata loaded.';
+          statusEl.textContent = 'Metadata generated and stored.';
           statusEl.className = 'status-line';
           metadataEl.hidden = false;
           const metadataOnly = json && json.metadata ? json.metadata : json;
           metadataEl.textContent = JSON.stringify(metadataOnly, null, 2);
         } catch (err) {
           console.error(err);
-          statusEl.textContent = 'Unexpected error loading metadata.';
+          statusEl.textContent = 'Unexpected error generating metadata.';
           statusEl.className = 'status-line error';
         } finally {
           loadBtn.disabled = false;
+          generateBtn.disabled = false;
         }
       }
 
-      loadBtn.addEventListener('click', loadMetadata);
+      loadBtn.addEventListener('click', loadMetadataFromDb);
+      generateBtn.addEventListener('click', generateMetadata);
+
+      // Try to load from DB immediately on page load (fast if present).
+      loadMetadataFromDb();
     </script>
   </body>
 </html>
