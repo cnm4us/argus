@@ -30,6 +30,7 @@ export async function initDb(): Promise<void> {
       id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
       vector_store_file_id VARCHAR(128) NOT NULL,
       openai_file_id       VARCHAR(128) NOT NULL,
+      s3_key               VARCHAR(512) NULL,
       filename             VARCHAR(255) NOT NULL,
       document_type        VARCHAR(64)  NOT NULL,
       date                 DATE         NULL,
@@ -42,10 +43,20 @@ export async function initDb(): Promise<void> {
       UNIQUE KEY uniq_vs_file (vector_store_file_id),
       KEY idx_doc_type (document_type),
       KEY idx_date (date),
-      KEY idx_provider (provider_name)
+      KEY idx_provider (provider_name),
+      KEY idx_s3_key (s3_key)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `;
 
   await db.query(createTableSQL);
-}
 
+  // Backfill for existing installations: ensure s3_key column exists.
+  const [rows] = (await db.query(
+    "SHOW COLUMNS FROM documents LIKE 's3_key'",
+  )) as any[];
+  if (!Array.isArray(rows) || rows.length === 0) {
+    await db.query(
+      'ALTER TABLE documents ADD COLUMN s3_key VARCHAR(512) NULL AFTER openai_file_id, ADD KEY idx_s3_key (s3_key)',
+    );
+  }
+}

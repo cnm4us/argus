@@ -1,8 +1,6 @@
 import express from 'express';
 import multer from 'multer';
 import type { Request, Response } from 'express';
-import fs from 'fs/promises';
-import path from 'path';
 import { toFile } from 'openai';
 import { requireAuth } from '../middleware/auth';
 import { config } from '../config';
@@ -14,6 +12,7 @@ import {
 } from '../documentTypes';
 import { loadTemplateForDocumentType } from '../templates';
 import { getDb } from '../db';
+import { uploadPdfToS3 } from '../s3Client';
 
 const router = express.Router();
 
@@ -23,8 +22,6 @@ const upload = multer({
     fileSize: 50 * 1024 * 1024, // 50 MB
   },
 });
-
-const localFileDir = path.join(__dirname, '..', 'file_store');
 
 function isValidDocumentType(value: string): value is DocumentType {
   return (DOCUMENT_TYPES as readonly string[]).includes(value);
@@ -137,15 +134,14 @@ router.post(
         file_id: file.id,
         is_active: true,
       };
+      let s3Key: string | null = null;
 
-      // Best-effort save of a local PDF copy for browser viewing.
+      // Best-effort upload of a PDF copy to S3 for browser viewing.
       try {
-        await fs.mkdir(localFileDir, { recursive: true });
-        const localPath = path.join(localFileDir, `${file.id}.pdf`);
-        await fs.writeFile(localPath, buffer);
-        attributes.has_local_copy = true;
+        s3Key = await uploadPdfToS3(file.id, buffer, originalname);
+        attributes.s3_key = s3Key;
       } catch (err) {
-        console.warn('Failed to save local PDF copy', err);
+        console.warn('Failed to upload PDF to S3', err);
       }
 
       let metadata: DocumentMetadata | null = null;
@@ -189,6 +185,7 @@ router.post(
           INSERT INTO documents (
             vector_store_file_id,
             openai_file_id,
+            s3_key,
             filename,
             document_type,
             date,
@@ -196,11 +193,12 @@ router.post(
             clinic_or_facility,
             is_active,
             metadata_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
           [
             vectorStoreFile.id,
             file.id,
+            s3Key,
             originalname,
             document_type,
             dateValue,
@@ -512,6 +510,7 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
         INSERT INTO documents (
           vector_store_file_id,
           openai_file_id,
+          s3_key,
           filename,
           document_type,
           date,
@@ -519,7 +518,7 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
           clinic_or_facility,
           is_active,
           metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           filename = VALUES(filename),
           document_type = VALUES(document_type),
@@ -527,11 +526,13 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
           provider_name = VALUES(provider_name),
           clinic_or_facility = VALUES(clinic_or_facility),
           is_active = VALUES(is_active),
-          metadata_json = VALUES(metadata_json)
+          metadata_json = VALUES(metadata_json),
+          s3_key = VALUES(s3_key)
       `,
         [
           id,
           fileIdRaw,
+          attributes.s3_key ?? null,
           typeof fileNameRaw === 'string' ? fileNameRaw : 'document.pdf',
           documentTypeRaw,
           dateValue,

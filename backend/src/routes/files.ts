@@ -1,32 +1,28 @@
 import express from 'express';
 import type { Request, Response } from 'express';
-import fs from 'fs/promises';
-import path from 'path';
 import { requireAuth } from '../middleware/auth';
+import { getPdfStreamFromS3 } from '../s3Client';
 
 const router = express.Router();
 
-const localFileDir = path.join(__dirname, '..', 'file_store');
-
 // GET /api/files/:id
-// Stream the underlying file (e.g., PDF) from the local file store.
+// Stream the underlying file (e.g., PDF) from S3.
 router.get('/:id', requireAuth, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const localPath = path.join(localFileDir, `${id}.pdf`);
 
     try {
-      const buf = await fs.readFile(localPath);
+      const { stream, filename } = await getPdfStreamFromS3(id);
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader(
         'Content-Disposition',
-        `inline; filename="${id}.pdf"`,
+        `inline; filename="${filename}"`,
       );
-      res.send(buf);
+      stream.pipe(res);
       return;
     } catch (err: any) {
-      if (err && err.code === 'ENOENT') {
-        res.status(404).json({ error: 'Local file not found' });
+      if (err?.$metadata?.httpStatusCode === 404 || err?.name === 'NoSuchKey') {
+        res.status(404).json({ error: 'File not found in S3' });
         return;
       }
       throw err;
