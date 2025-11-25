@@ -26,3 +26,7 @@ export async function loadTemplateForDocumentType(
   return `${universal}\n\n---\n\n${doctype}`;
 }
 
+export async function loadClassificationTemplate(): Promise<string> {
+  const classifyPath = path.join(templatesRoot, 'classify.md');
+  return fs.readFile(classifyPath, 'utf8');
+}

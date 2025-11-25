@@ -1,4 +1,5 @@
 export const DOCUMENT_TYPES = [
+  'unclassified',
   'office_visit',
   'telehealth_visit',
   'telephone_visit',

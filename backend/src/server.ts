@@ -70,6 +70,7 @@ app.get('/health', (_req, res) => {
     status: 'ok',
     hasOpenAIApiKey: Boolean(config.openaiApiKey),
     hasVectorStoreId: Boolean(config.vectorStoreId),
+    debugRequests: config.debugRequests,
   });
 });
 

@@ -47,9 +47,22 @@
       }
       .controls {
         display: flex;
+        flex-wrap: wrap;
         gap: 0.5rem;
         align-items: center;
         margin-bottom: 1rem;
+      }
+      .controls-left {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .controls-right {
+        margin-left: auto;
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
       }
       input[type="password"] {
         padding: 0.35rem 0.5rem;
@@ -77,6 +90,25 @@
       .status-line.error {
         color: #b91c1c;
       }
+      .debug-link {
+        font-size: 0.8rem;
+        color: #2563eb;
+        cursor: pointer;
+        text-decoration: underline;
+      }
+      .debug-link.hidden {
+        display: none;
+      }
+      .type-select-label {
+        font-size: 0.85rem;
+        font-weight: 500;
+      }
+      .type-select {
+        padding: 0.3rem 0.5rem;
+        border-radius: 4px;
+        border: 1px solid #d1d5db;
+        font: inherit;
+      }
     </style>
   </head>
   <body>
@@ -94,11 +126,44 @@
       </p>
 
       <div class="controls">
-        <button id="load-btn">Load metadata</button>
+        <div class="controls-left">
+          <button id="load-btn">Load metadata</button>
+          <button id="generate-btn">Generate metadata</button>
+          <span class="type-select-label">Document Type</span>
+          <select id="document_type" class="type-select">
+            <option value="">(unknown)</option>
+            <option value="unclassified">unclassified</option>
+            <option value="office_visit">office_visit</option>
+            <option value="telehealth_visit">telehealth_visit</option>
+            <option value="telephone_visit">telephone_visit</option>
+            <option value="telephone_encounter">telephone_encounter</option>
+            <option value="medication_refill">medication_refill</option>
+            <option value="imaging_report">imaging_report</option>
+            <option value="lab_result">lab_result</option>
+            <option value="procedure_note">procedure_note</option>
+            <option value="referral">referral</option>
+            <option value="patient_message">patient_message</option>
+            <option value="provider_message">provider_message</option>
+            <option value="triage_note">triage_note</option>
+            <option value="emergency_room_note">emergency_room_note</option>
+            <option value="hospitalization_note">hospitalization_note</option>
+            <option value="discharge_summary">discharge_summary</option>
+            <option value="care_plan">care_plan</option>
+            <option value="external_specialist_note">
+              external_specialist_note
+            </option>
+            <option value="legal_document">legal_document</option>
+          </select>
+          <button id="update-type-btn">Update type</button>
+        </div>
+        <div class="controls-right">
+          <span id="debug-link" class="debug-link hidden">View debug logs</span>
+        </div>
       </div>
 
       <div id="status" class="status-line"></div>
       <pre id="metadata" hidden></pre>
+      <pre id="logs" hidden></pre>
     </div>
 
     <script>
@@ -108,14 +173,16 @@
       }
 
       const loadBtn = document.getElementById('load-btn');
-      const generateBtn = document.createElement('button');
-      generateBtn.textContent = 'Generate metadata';
-      generateBtn.id = 'generate-btn';
+      const generateBtn = document.getElementById('generate-btn');
+      const updateTypeBtn = document.getElementById('update-type-btn');
+      const documentTypeSelect = document.getElementById('document_type');
       const statusEl = document.getElementById('status');
       const metadataEl = document.getElementById('metadata');
+      const logsEl = document.getElementById('logs');
+      const debugLinkEl = document.getElementById('debug-link');
 
       // Insert the generate button next to the load button.
-      loadBtn.insertAdjacentElement('afterend', generateBtn);
+      // (now part of the static HTML)
 
       async function loadMetadataFromDb() {
         const id = getVectorStoreFileId();
@@ -129,10 +196,31 @@
         statusEl.className = 'status-line';
         loadBtn.disabled = true;
         generateBtn.disabled = true;
+        updateTypeBtn.disabled = true;
         metadataEl.hidden = true;
         metadataEl.textContent = '';
 
         try {
+          // Load current document type from vector-store attributes.
+          try {
+            const detailsRes = await fetch(
+              `/api/documents/${encodeURIComponent(id)}`,
+            );
+            const detailsJson = await detailsRes.json().catch(() => null);
+            if (detailsRes.ok && detailsJson && detailsJson.attributes) {
+              const attrs = detailsJson.attributes;
+              const currentType =
+                typeof attrs.document_type === 'string'
+                  ? attrs.document_type
+                  : '';
+              if (currentType && documentTypeSelect) {
+                documentTypeSelect.value = currentType;
+              }
+            }
+          } catch {
+            // Non-fatal; we just won't pre-fill the type.
+          }
+
           const res = await fetch(
             `/api/documents/${encodeURIComponent(id)}/metadata/db`,
           );
@@ -163,6 +251,7 @@
         } finally {
           loadBtn.disabled = false;
           generateBtn.disabled = false;
+          updateTypeBtn.disabled = false;
         }
       }
 
@@ -180,6 +269,7 @@
         statusEl.className = 'status-line';
         loadBtn.disabled = true;
         generateBtn.disabled = true;
+        updateTypeBtn.disabled = true;
         metadataEl.hidden = true;
         metadataEl.textContent = '';
 
@@ -208,14 +298,139 @@
         } finally {
           loadBtn.disabled = false;
           generateBtn.disabled = false;
+          updateTypeBtn.disabled = false;
         }
       }
 
       loadBtn.addEventListener('click', loadMetadataFromDb);
       generateBtn.addEventListener('click', generateMetadata);
+      updateTypeBtn.addEventListener('click', async () => {
+        const id = getVectorStoreFileId();
+        if (!id) {
+          statusEl.textContent =
+            'Missing document id in query string (?id=...).';
+          statusEl.className = 'status-line error';
+          return;
+        }
+
+        const newType = documentTypeSelect.value;
+        if (!newType) {
+          statusEl.textContent = 'Select a document type before updating.';
+          statusEl.className = 'status-line error';
+          return;
+        }
+
+        statusEl.textContent = 'Updating document type…';
+        statusEl.className = 'status-line';
+        loadBtn.disabled = true;
+        generateBtn.disabled = true;
+        updateTypeBtn.disabled = true;
+
+        try {
+          const res = await fetch(
+            `/api/documents/${encodeURIComponent(id)}/type`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ document_type: newType }),
+            },
+          );
+
+          const json = await res.json().catch(() => null);
+          if (!res.ok) {
+            statusEl.textContent =
+              'Error updating type: ' +
+              (json && json.error ? json.error : res.status);
+            statusEl.className = 'status-line error';
+            return;
+          }
+
+          statusEl.textContent =
+            'Document type updated. Use "Generate metadata" to refresh metadata for the new type.';
+          statusEl.className = 'status-line';
+        } catch (err) {
+          console.error(err);
+          statusEl.textContent =
+            'Unexpected error updating document type. See console for details.';
+          statusEl.className = 'status-line error';
+        } finally {
+          loadBtn.disabled = false;
+          generateBtn.disabled = false;
+          updateTypeBtn.disabled = false;
+        }
+      });
+
+      async function loadDebugFlag() {
+        try {
+          const res = await fetch('/health');
+          const json = await res.json().catch(() => null);
+          if (!res.ok || !json) return;
+          if (json.debugRequests) {
+            debugLinkEl.classList.remove('hidden');
+          }
+        } catch {
+          // Ignore failures; debug link stays hidden.
+        }
+      }
+
+      async function loadLogs() {
+        const id = getVectorStoreFileId();
+        if (!id) {
+          statusEl.textContent =
+            'Missing document id in query string (?id=...).';
+          statusEl.className = 'status-line error';
+          return;
+        }
+
+        statusEl.textContent = 'Loading debug logs…';
+        statusEl.className = 'status-line';
+        logsEl.hidden = true;
+        logsEl.textContent = '';
+
+        try {
+          const res = await fetch(
+            `/api/documents/${encodeURIComponent(id)}/logs`,
+          );
+          const json = await res.json().catch(() => null);
+
+          if (!res.ok) {
+            statusEl.textContent =
+              'Error loading logs: ' + (json && json.error ? json.error : res.status);
+            statusEl.className = 'status-line error';
+            return;
+          }
+
+          const items = (json && json.items) || [];
+          if (items.length === 0) {
+            statusEl.textContent = 'No debug log entries for this document.';
+            statusEl.className = 'status-line';
+            logsEl.hidden = true;
+            logsEl.textContent = '';
+            return;
+          }
+
+          statusEl.textContent = `Loaded ${items.length} log event(s).`;
+          statusEl.className = 'status-line';
+          logsEl.hidden = false;
+          logsEl.textContent = JSON.stringify(items, null, 2);
+        } catch (err) {
+          console.error(err);
+          statusEl.textContent =
+            'Unexpected error loading logs. See console for details.';
+          statusEl.className = 'status-line error';
+        }
+      }
+
+      debugLinkEl.addEventListener('click', (e) => {
+        e.preventDefault();
+        loadLogs();
+      });
 
       // Try to load from DB immediately on page load (fast if present).
       loadMetadataFromDb();
+      loadDebugFlag();
     </script>
   </body>
 </html>

@@ -175,9 +175,9 @@
       </p>
 
       <form id="upload-form" onsubmit="return false;">
-        <label for="document_type">Document Type</label>
-        <select id="document_type" name="document_type" required>
-          <option value="">Select type…</option>
+        <label for="document_type">Document Type (optional)</label>
+        <select id="document_type" name="document_type">
+          <option value="">(leave blank for unclassified)</option>
           <option value="office_visit">office_visit</option>
           <option value="telehealth_visit">telehealth_visit</option>
           <option value="telephone_visit">telephone_visit</option>
@@ -212,8 +212,9 @@
         <div id="dropzone" class="dropzone">
           Drag and drop PDF files here, or click to browse.
           <div class="hint">
-            All selected files will use the chosen document type and upload
-            asynchronously.
+            If you choose a document type here, all selected files will use that
+            type. Otherwise they will be uploaded as unclassified and can be
+            typed later.
           </div>
         </div>
       </form>
@@ -273,7 +274,9 @@
         ui.statusEl.textContent = 'Uploading…';
 
         const formData = new FormData();
-        formData.append('document_type', documentType);
+        if (documentType) {
+          formData.append('document_type', documentType);
+        }
         formData.append('file', file);
 
         const xhr = new XMLHttpRequest();
@@ -321,10 +324,6 @@
         setStatus('', '');
 
         const documentType = documentTypeSelect.value;
-        if (!documentType) {
-          setStatus('Select a document type before uploading.', 'error');
-          return;
-        }
 
         const files = Array.from(fileList || []).filter((file) => {
           return (
@@ -340,8 +339,8 @@
 
         setStatus(`Uploading ${files.length} file(s)…`, '');
 
-        for (const file of files) {
-          uploadFile(file, documentType);
+       for (const file of files) {
+         uploadFile(file, documentType);
         }
       }
 

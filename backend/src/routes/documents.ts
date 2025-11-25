@@ -10,7 +10,7 @@ import {
   type DocumentType,
   type DocumentMetadata,
 } from '../documentTypes';
-import { loadTemplateForDocumentType } from '../templates';
+import { loadTemplateForDocumentType, loadClassificationTemplate } from '../templates';
 import { getDb } from '../db';
 import { uploadPdfToS3, deleteObjectFromS3 } from '../s3Client';
 import { logOpenAI } from '../logger';
@@ -33,8 +33,13 @@ async function extractMetadata(
   fileId: string,
   fileName: string,
 ): Promise<DocumentMetadata | null> {
-  const maxAttempts = 3;
-  const baseDelayMs = 4000;
+  const maxAttempts =
+    config.metadataRetryMaxAttempts > 0 ? config.metadataRetryMaxAttempts : 3;
+  const baseDelaySeconds =
+    config.metadataRetryBaseDelaySeconds > 0
+      ? config.metadataRetryBaseDelaySeconds
+      : 4;
+  const baseDelayMs = baseDelaySeconds * 1000;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -130,6 +135,172 @@ async function extractMetadata(
   return null;
 }
 
+interface ClassificationResult {
+  predictedType: DocumentType | 'unclassified' | null;
+  confidence: number | null;
+  rawLabel?: string;
+}
+
+async function classifyDocument(
+  fileId: string,
+  fileName: string,
+): Promise<ClassificationResult | null> {
+  try {
+    logOpenAI('classify:start', {
+      fileId,
+      fileName,
+    });
+
+    const template = await loadClassificationTemplate();
+
+    const response = await openai.responses.create({
+      model: 'gpt-4.1-mini',
+      instructions: template,
+      input: [
+        {
+          role: 'user',
+          type: 'message',
+          content: [
+            {
+              type: 'input_text',
+              text:
+                'Classify this document according to the provided schema and respond only with JSON that matches the specified JSON output format.',
+            },
+            {
+              type: 'input_file',
+              file_id: fileId,
+            },
+          ],
+        },
+      ],
+      text: {
+        format: { type: 'json_object' },
+      },
+    });
+
+    const rawText =
+      ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
+      ((response as any).output_text as string | undefined);
+
+    if (!rawText) {
+      logOpenAI('classify:error', {
+        fileId,
+        fileName,
+        error: { message: 'No text output from classification model' },
+      });
+      return null;
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (err) {
+      logOpenAI('classify:error', {
+        fileId,
+        fileName,
+        error: {
+          message: 'Failed to parse classification JSON',
+          rawText: rawText.slice(0, 500),
+        },
+      });
+      return null;
+    }
+
+    const predictedTypeRaw = typeof parsed.predicted_type === 'string' ? parsed.predicted_type : '';
+    const confidenceRaw = parsed.confidence;
+    const rawLabel =
+      typeof parsed.raw_label === 'string' ? parsed.raw_label : undefined;
+
+    let confidence: number | null = null;
+    if (typeof confidenceRaw === 'number') {
+      confidence = confidenceRaw;
+    } else if (typeof confidenceRaw === 'string') {
+      const num = Number(confidenceRaw);
+      confidence = Number.isFinite(num) ? num : null;
+    }
+
+    let predictedType: DocumentType | 'unclassified' | null = null;
+    if (predictedTypeRaw === 'unclassified') {
+      predictedType = 'unclassified';
+    } else if (isValidDocumentType(predictedTypeRaw)) {
+      predictedType = predictedTypeRaw;
+    } else {
+      predictedType = null;
+    }
+
+    logOpenAI('classify:success', {
+      fileId,
+      fileName,
+      predictedType,
+      confidence,
+      rawLabel,
+    });
+
+    return {
+      predictedType,
+      confidence,
+      rawLabel,
+    };
+  } catch (error) {
+    logOpenAI('classify:error', {
+      fileId,
+      fileName,
+      error:
+        error instanceof Error
+          ? { message: error.message, stack: error.stack }
+          : error,
+    });
+    return null;
+  }
+}
+
+async function waitForVectorStoreFileReady(
+  vectorStoreFileId: string,
+  maxAttempts = 5,
+  delayMs = 1000,
+): Promise<boolean> {
+  if (!config.vectorStoreId) {
+    return false;
+  }
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const file = await openai.vectorStores.files.retrieve(vectorStoreFileId, {
+        vector_store_id: config.vectorStoreId,
+      });
+
+      if (file.status === 'completed') {
+        return true;
+      }
+
+      if (file.status === 'failed' || file.status === 'cancelled') {
+        logOpenAI('vectorStoreFile:not_ready', {
+          vectorStoreFileId,
+          status: file.status,
+        });
+        return false;
+      }
+    } catch (error) {
+      logOpenAI('vectorStoreFile:poll_error', {
+        vectorStoreFileId,
+        error:
+          error instanceof Error
+            ? { message: error.message, stack: error.stack }
+            : error,
+      });
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  logOpenAI('vectorStoreFile:not_ready_timeout', {
+    vectorStoreFileId,
+    attempts: maxAttempts,
+  });
+
+  return false;
+}
+
 // POST /api/documents
 // - Accepts a single PDF file and a document_type field.
 // - Uploads the file to OpenAI Files.
@@ -156,12 +327,17 @@ router.post(
       const { originalname, buffer } = req.file;
       const { document_type } = req.body as { document_type?: string };
 
-      if (!document_type || !isValidDocumentType(document_type)) {
+      let effectiveDocumentType: DocumentType;
+      if (!document_type || document_type.trim() === '') {
+        effectiveDocumentType = 'unclassified';
+      } else if (!isValidDocumentType(document_type)) {
         res.status(400).json({
-          error: 'Invalid or missing document_type',
+          error: 'Invalid document_type',
           allowed: DOCUMENT_TYPES,
         });
         return;
+      } else {
+        effectiveDocumentType = document_type as DocumentType;
       }
 
       // 1) Upload raw file to OpenAI Files
@@ -171,7 +347,7 @@ router.post(
       });
 
       const attributes: { [key: string]: string | number | boolean } = {
-        document_type,
+        document_type: effectiveDocumentType,
         file_name: originalname,
         file_id: file.id,
         is_active: true,
@@ -190,11 +366,7 @@ router.post(
 
       if (!asyncMode) {
         // 2) Extract structured metadata using the templates and file (synchronous path).
-        metadata = await extractMetadata(
-          document_type,
-          file.id,
-          originalname,
-        );
+        metadata = await extractMetadata(effectiveDocumentType, file.id, originalname);
 
         if (metadata) {
           if (metadata.date) attributes.date = metadata.date;
@@ -235,19 +407,21 @@ router.post(
             provider_name,
             clinic_or_facility,
             is_active,
+            needs_metadata,
             metadata_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
           [
             vectorStoreFile.id,
             file.id,
             s3Key,
             originalname,
-            document_type,
+            effectiveDocumentType,
             dateValue,
             metadata ? metadata.provider_name : null,
             metadata ? metadata.clinic_or_facility : null,
             1,
+            metadata ? 0 : 1,
             JSON.stringify(metadata ?? {}),
           ],
         );
@@ -255,27 +429,159 @@ router.post(
         console.error('Failed to persist document metadata to DB:', err);
       }
 
-      // For async uploads, kick off background metadata extraction so the caller
-      // does not have to visit the metadata page to populate it.
+      // For async uploads, kick off background classification / metadata work.
       if (asyncMode) {
         (async () => {
           try {
-            logOpenAI('backgroundMetadata:start', {
-              documentType: document_type,
+            // If a specific document type was provided, skip classification and
+            // run background metadata extraction as before.
+            if (effectiveDocumentType !== 'unclassified') {
+              logOpenAI('backgroundMetadata:start', {
+                documentType: effectiveDocumentType,
+                fileId: file.id,
+                vectorStoreFileId: vectorStoreFile.id,
+              });
+
+              const bgMetadata = await extractMetadata(
+                effectiveDocumentType,
+                file.id,
+                originalname,
+              );
+
+              if (!bgMetadata) {
+                logOpenAI('backgroundMetadata:skip', {
+                  reason: 'extractMetadata returned null',
+                  documentType: effectiveDocumentType,
+                  fileId: file.id,
+                  vectorStoreFileId: vectorStoreFile.id,
+                });
+                return;
+              }
+
+              const updatedAttributes: {
+                [key: string]: string | number | boolean;
+              } = {
+                ...attributes,
+              };
+
+              if (bgMetadata.date) {
+                updatedAttributes.date = bgMetadata.date;
+              }
+              if (bgMetadata.provider_name) {
+                updatedAttributes.provider_name = bgMetadata.provider_name;
+              }
+              if (bgMetadata.clinic_or_facility) {
+                updatedAttributes.clinic_or_facility =
+                  bgMetadata.clinic_or_facility;
+              }
+              updatedAttributes.has_metadata = true;
+
+              if (config.vectorStoreId) {
+                try {
+                  const ready = await waitForVectorStoreFileReady(
+                    vectorStoreFile.id,
+                  );
+                  if (ready) {
+                    await openai.vectorStores.files.update(vectorStoreFile.id, {
+                      vector_store_id: config.vectorStoreId,
+                      attributes: updatedAttributes,
+                    });
+                  } else {
+                    logOpenAI('backgroundMetadata:vs_not_ready', {
+                      vectorStoreFileId: vectorStoreFile.id,
+                    });
+                  }
+                } catch (err) {
+                  logOpenAI('backgroundMetadata:attributes_error', {
+                    error:
+                      err instanceof Error
+                        ? { message: err.message, stack: err.stack }
+                        : err,
+                    vectorStoreFileId: vectorStoreFile.id,
+                  });
+                }
+              }
+
+              try {
+                const db = await getDb();
+                const dateValue = bgMetadata.date
+                  ? bgMetadata.date.slice(0, 10)
+                  : null;
+
+                await db.query(
+                  `
+                  UPDATE documents
+                  SET
+                    date = ?,
+                    provider_name = ?,
+                    clinic_or_facility = ?,
+                    metadata_json = ?,
+                    needs_metadata = 0
+                  WHERE vector_store_file_id = ?
+                `,
+                  [
+                    dateValue,
+                    bgMetadata.provider_name ?? null,
+                    bgMetadata.clinic_or_facility ?? null,
+                    JSON.stringify(bgMetadata),
+                    vectorStoreFile.id,
+                  ],
+                );
+              } catch (err) {
+                console.error(
+                  'Failed to persist background metadata to DB:',
+                  err,
+                );
+                logOpenAI('backgroundMetadata:db_error', {
+                  error:
+                    err instanceof Error
+                      ? { message: err.message, stack: err.stack }
+                      : err,
+                  vectorStoreFileId: vectorStoreFile.id,
+                });
+              }
+
+              logOpenAI('backgroundMetadata:success', {
+                documentType: effectiveDocumentType,
+                fileId: file.id,
+                vectorStoreFileId: vectorStoreFile.id,
+              });
+
+              return;
+            }
+
+            // For unclassified uploads, run classification only (no automatic metadata).
+            logOpenAI('classify:background:start', {
               fileId: file.id,
               vectorStoreFileId: vectorStoreFile.id,
             });
 
-            const bgMetadata = await extractMetadata(
-              document_type,
+            const classification = await classifyDocument(
               file.id,
               originalname,
             );
+            if (!classification) {
+              logOpenAI('classify:background:skip', {
+                reason: 'classification returned null',
+                fileId: file.id,
+                vectorStoreFileId: vectorStoreFile.id,
+              });
+              return;
+            }
 
-            if (!bgMetadata) {
-              logOpenAI('backgroundMetadata:skip', {
-                reason: 'extractMetadata returned null',
-                documentType: document_type,
+            const { predictedType, confidence } = classification;
+            const threshold = config.classifyConfidenceThreshold || 0.85;
+
+            if (
+              !predictedType ||
+              predictedType === 'unclassified' ||
+              confidence === null ||
+              confidence < threshold
+            ) {
+              logOpenAI('classify:background:low_confidence', {
+                predictedType,
+                confidence,
+                threshold,
                 fileId: file.id,
                 vectorStoreFileId: vectorStoreFile.id,
               });
@@ -286,28 +592,26 @@ router.post(
               [key: string]: string | number | boolean;
             } = {
               ...attributes,
+              document_type: predictedType,
             };
-
-            if (bgMetadata.date) {
-              updatedAttributes.date = bgMetadata.date;
-            }
-            if (bgMetadata.provider_name) {
-              updatedAttributes.provider_name = bgMetadata.provider_name;
-            }
-            if (bgMetadata.clinic_or_facility) {
-              updatedAttributes.clinic_or_facility =
-                bgMetadata.clinic_or_facility;
-            }
-            updatedAttributes.has_metadata = true;
 
             if (config.vectorStoreId) {
               try {
-                await openai.vectorStores.files.update(vectorStoreFile.id, {
-                  vector_store_id: config.vectorStoreId,
-                  attributes: updatedAttributes,
-                });
+                const ready = await waitForVectorStoreFileReady(
+                  vectorStoreFile.id,
+                );
+                if (ready) {
+                  await openai.vectorStores.files.update(vectorStoreFile.id, {
+                    vector_store_id: config.vectorStoreId,
+                    attributes: updatedAttributes,
+                  });
+                } else {
+                  logOpenAI('classify:background:vs_not_ready', {
+                    vectorStoreFileId: vectorStoreFile.id,
+                  });
+                }
               } catch (err) {
-                logOpenAI('backgroundMetadata:attributes_error', {
+                logOpenAI('classify:background:attributes_error', {
                   error:
                     err instanceof Error
                       ? { message: err.message, stack: err.stack }
@@ -319,8 +623,127 @@ router.post(
 
             try {
               const db = await getDb();
-              const dateValue = bgMetadata.date
-                ? bgMetadata.date.slice(0, 10)
+              await db.query(
+                `
+                UPDATE documents
+                SET document_type = ?
+                WHERE vector_store_file_id = ?
+              `,
+                [predictedType, vectorStoreFile.id],
+              );
+            } catch (err) {
+              console.error('Failed to update classified document_type in DB:', err);
+              logOpenAI('classify:background:db_error', {
+                error:
+                  err instanceof Error
+                    ? { message: err.message, stack: err.stack }
+                    : err,
+                vectorStoreFileId: vectorStoreFile.id,
+              });
+            }
+
+            logOpenAI('classify:background:success', {
+              predictedType,
+              confidence,
+              fileId: file.id,
+              vectorStoreFileId: vectorStoreFile.id,
+            });
+
+            // Optionally run automatic metadata extraction after successful classification.
+            if (!config.autoMetadataAfterClassify) {
+              return;
+            }
+
+            const classifiedType = predictedType as DocumentType;
+
+            logOpenAI('backgroundMetadata:after_classify:enter', {
+              documentType: classifiedType,
+              fileId: file.id,
+              vectorStoreFileId: vectorStoreFile.id,
+            });
+
+            logOpenAI('backgroundMetadata:after_classify:start', {
+              documentType: classifiedType,
+              fileId: file.id,
+              vectorStoreFileId: vectorStoreFile.id,
+            });
+
+            logOpenAI('backgroundMetadata:after_classify:before_extract', {
+              documentType: classifiedType,
+              fileId: file.id,
+              vectorStoreFileId: vectorStoreFile.id,
+            });
+
+            const autoMetadata = await extractMetadata(
+              classifiedType,
+              file.id,
+              originalname,
+            );
+
+            if (!autoMetadata) {
+              logOpenAI('backgroundMetadata:after_classify:skip', {
+                reason: 'extractMetadata returned null',
+                documentType: classifiedType,
+                fileId: file.id,
+                vectorStoreFileId: vectorStoreFile.id,
+              });
+              return;
+            }
+
+            logOpenAI('backgroundMetadata:after_classify:after_extract', {
+              documentType: classifiedType,
+              fileId: file.id,
+              vectorStoreFileId: vectorStoreFile.id,
+            });
+
+            const metadataAttributes: {
+              [key: string]: string | number | boolean;
+            } = {
+              ...updatedAttributes,
+            };
+
+            if (autoMetadata.date) {
+              metadataAttributes.date = autoMetadata.date;
+            }
+            if (autoMetadata.provider_name) {
+              metadataAttributes.provider_name = autoMetadata.provider_name;
+            }
+            if (autoMetadata.clinic_or_facility) {
+              metadataAttributes.clinic_or_facility =
+                autoMetadata.clinic_or_facility;
+            }
+            metadataAttributes.has_metadata = true;
+
+            if (config.vectorStoreId) {
+              try {
+                const ready = await waitForVectorStoreFileReady(
+                  vectorStoreFile.id,
+                );
+                if (ready) {
+                  await openai.vectorStores.files.update(vectorStoreFile.id, {
+                    vector_store_id: config.vectorStoreId,
+                    attributes: metadataAttributes,
+                  });
+                } else {
+                  logOpenAI('backgroundMetadata:after_classify:vs_not_ready', {
+                    vectorStoreFileId: vectorStoreFile.id,
+                  });
+                }
+              } catch (err) {
+                logOpenAI('backgroundMetadata:after_classify:attributes_error', {
+                  error:
+                    err instanceof Error
+                      ? { message: err.message, stack: err.stack }
+                      : err,
+                  vectorStoreFileId: vectorStoreFile.id,
+                });
+              }
+            }
+
+            try {
+              const db = await getDb();
+              const dateValue = autoMetadata.date
+                ? autoMetadata.date.slice(0, 10)
                 : null;
 
               await db.query(
@@ -330,23 +753,24 @@ router.post(
                   date = ?,
                   provider_name = ?,
                   clinic_or_facility = ?,
-                  metadata_json = ?
+                  metadata_json = ?,
+                  needs_metadata = 0
                 WHERE vector_store_file_id = ?
               `,
                 [
                   dateValue,
-                  bgMetadata.provider_name ?? null,
-                  bgMetadata.clinic_or_facility ?? null,
-                  JSON.stringify(bgMetadata),
+                  autoMetadata.provider_name ?? null,
+                  autoMetadata.clinic_or_facility ?? null,
+                  JSON.stringify(autoMetadata),
                   vectorStoreFile.id,
                 ],
               );
             } catch (err) {
               console.error(
-                'Failed to persist background metadata to DB:',
+                'Failed to persist auto metadata after classify to DB:',
                 err,
               );
-              logOpenAI('backgroundMetadata:db_error', {
+              logOpenAI('backgroundMetadata:after_classify:db_error', {
                 error:
                   err instanceof Error
                     ? { message: err.message, stack: err.stack }
@@ -355,14 +779,14 @@ router.post(
               });
             }
 
-            logOpenAI('backgroundMetadata:success', {
-              documentType: document_type,
+            logOpenAI('backgroundMetadata:after_classify:success', {
+              documentType: classifiedType,
               fileId: file.id,
               vectorStoreFileId: vectorStoreFile.id,
             });
           } catch (err) {
-            console.error('Background metadata extraction failed:', err);
-            logOpenAI('backgroundMetadata:error', {
+            console.error('Background classification/metadata failed:', err);
+            logOpenAI('classify:background:error', {
               error:
                 err instanceof Error
                   ? { message: err.message, stack: err.stack }
@@ -432,6 +856,7 @@ router.get('/db', requireAuth, async (_req: Request, res: Response) => {
           provider_name,
           clinic_or_facility,
           is_active,
+          needs_metadata,
           metadata_json,
           s3_key
         FROM documents
@@ -453,6 +878,7 @@ router.get('/db', requireAuth, async (_req: Request, res: Response) => {
       const providerName = (row.provider_name as string | null) ?? '';
       const clinicOrFacility = (row.clinic_or_facility as string | null) ?? '';
       const isActiveRaw = row.is_active as number | boolean | null;
+      const needsMetadataRaw = row.needs_metadata as number | boolean | null;
       const s3Key = (row.s3_key as string | null) ?? undefined;
 
       let metadataRaw = row.metadata_json;
@@ -464,10 +890,15 @@ router.get('/db', requireAuth, async (_req: Request, res: Response) => {
         }
       }
 
-      const hasMetadata =
+      const hasMetadataObject =
         metadataRaw && typeof metadataRaw === 'object'
           ? Object.keys(metadataRaw).length > 0
           : false;
+
+      const needsMetadata =
+        needsMetadataRaw === 1 || needsMetadataRaw === true;
+
+      const hasMetadata = hasMetadataObject && !needsMetadata;
 
       const attributes: { [key: string]: string | number | boolean } = {
         file_id: openaiFileId,
@@ -499,6 +930,8 @@ router.get('/db', requireAuth, async (_req: Request, res: Response) => {
       if (hasMetadata) {
         attributes.has_metadata = true;
       }
+
+      attributes.needs_metadata = needsMetadata;
 
       return {
         id: vectorStoreFileId,
@@ -659,6 +1092,167 @@ router.get('/:id', requireAuth, async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/documents/:id/type
+// Update the document_type classification and mark metadata as needing refresh.
+router.post('/:id/type', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!config.vectorStoreId) {
+      res.status(500).json({ error: 'ARGUS_VECTOR_STORE_ID not configured' });
+      return;
+    }
+
+    const { id } = req.params;
+    const { document_type } = req.body as { document_type?: string };
+
+    if (!document_type || !isValidDocumentType(document_type)) {
+      res.status(400).json({
+        error: 'Invalid or missing document_type',
+        allowed: DOCUMENT_TYPES,
+      });
+      return;
+    }
+
+    const file = await openai.vectorStores.files.retrieve(id, {
+      vector_store_id: config.vectorStoreId,
+    });
+
+    const attributes = (file.attributes ?? {}) as {
+      [key: string]: string | number | boolean;
+    };
+
+    const previousType =
+      typeof attributes.document_type === 'string'
+        ? (attributes.document_type as string)
+        : null;
+    const underlyingFileId =
+      typeof attributes.file_id === 'string'
+        ? (attributes.file_id as string)
+        : null;
+
+    const updatedAttributes: { [key: string]: string | number | boolean } = {
+      ...attributes,
+      document_type,
+    };
+
+    // Clear has_metadata flag so UI shows it as needing regeneration.
+    if (updatedAttributes.has_metadata) {
+      delete updatedAttributes.has_metadata;
+    }
+
+    const updatedFile = await openai.vectorStores.files.update(id, {
+      vector_store_id: config.vectorStoreId,
+      attributes: updatedAttributes,
+    });
+
+    try {
+      const db = await getDb();
+      await db.query(
+        `
+          UPDATE documents
+          SET document_type = ?, needs_metadata = 1
+          WHERE vector_store_file_id = ?
+        `,
+        [document_type, id],
+      );
+    } catch (err) {
+      console.error('Failed to update document_type in DB:', err);
+    }
+
+    logOpenAI('documentType:update', {
+      vectorStoreFileId: id,
+      fileId: underlyingFileId ?? undefined,
+      from: previousType,
+      to: document_type,
+    });
+
+    res.json({
+      ok: true,
+      documentType: document_type,
+      attributes: updatedFile.attributes ?? null,
+    });
+  } catch (error) {
+    console.error('Error in POST /api/documents/:id/type:', error);
+    res.status(500).json({ error: 'Failed to update document_type' });
+  }
+});
+
+// GET /api/documents/:id/logs
+// Return OpenAI-related log events for a single document (debug only).
+router.get('/:id/logs', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!config.debugRequests) {
+      res.status(404).json({ error: 'Debug logging is disabled' });
+      return;
+    }
+
+    const { id } = req.params;
+
+    // Look up the DB row to get the OpenAI file ID.
+    let openaiFileId: string | null = null;
+    try {
+      const db = await getDb();
+      const [rows] = (await db.query(
+        'SELECT openai_file_id FROM documents WHERE vector_store_file_id = ? LIMIT 1',
+        [id],
+      )) as any[];
+
+      if (Array.isArray(rows) && rows.length > 0) {
+        const row = rows[0] as any;
+        if (row.openai_file_id && typeof row.openai_file_id === 'string') {
+          openaiFileId = row.openai_file_id;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to look up openai_file_id for logs:', err);
+    }
+
+    const fs = await import('fs');
+    const path = await import('path');
+
+    // Logs are written relative to the backend root (../logs from src).
+    const logsDir = path.join(__dirname, '..', '..', 'logs');
+    const openaiLogPath = path.join(logsDir, 'openai.log');
+
+    if (!fs.existsSync(openaiLogPath)) {
+      res.json({ items: [] });
+      return;
+    }
+
+    const raw = fs.readFileSync(openaiLogPath, 'utf8');
+    const lines = raw.split('\n').filter((line) => line.trim().length > 0);
+
+    const events: any[] = [];
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        const entryVsId = entry.vectorStoreFileId as string | undefined;
+        const entryFileId = entry.fileId as string | undefined;
+
+        if (
+          (entryVsId && entryVsId === id) ||
+          (openaiFileId && entryFileId && entryFileId === openaiFileId)
+        ) {
+          events.push(entry);
+        }
+      } catch {
+        // Ignore malformed lines.
+      }
+    }
+
+    events.sort((a, b) => {
+      const ta = typeof a.ts === 'string' ? a.ts : '';
+      const tb = typeof b.ts === 'string' ? b.ts : '';
+      if (ta === tb) return 0;
+      return ta < tb ? -1 : 1;
+    });
+
+    res.json({ items: events });
+  } catch (error) {
+    console.error('Error in GET /api/documents/:id/logs:', error);
+    res.status(500).json({ error: 'Failed to read logs for document' });
+  }
+});
+
 async function getMetadataFromDb(
   vectorStoreFileId: string,
 ): Promise<DocumentMetadata | null> {
@@ -792,8 +1386,9 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
           provider_name,
           clinic_or_facility,
           is_active,
+          needs_metadata,
           metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           filename = VALUES(filename),
           document_type = VALUES(document_type),
@@ -801,6 +1396,7 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
           provider_name = VALUES(provider_name),
           clinic_or_facility = VALUES(clinic_or_facility),
           is_active = VALUES(is_active),
+          needs_metadata = VALUES(needs_metadata),
           metadata_json = VALUES(metadata_json),
           s3_key = VALUES(s3_key)
       `,
@@ -814,6 +1410,7 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
           metadata.provider_name,
           metadata.clinic_or_facility,
           1,
+          0,
           JSON.stringify(metadata),
         ],
       );

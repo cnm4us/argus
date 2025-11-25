@@ -8,3 +8,4 @@ yarn-debug.log*
 yarn-error.log*
 backend/file_store/
 test_pdfs/
+backend/logs/

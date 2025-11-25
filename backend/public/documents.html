@@ -116,6 +116,16 @@
       .status-line.error {
         color: #b91c1c;
       }
+      .needs-metadata-tag {
+        display: inline-block;
+        margin-left: 0.35rem;
+        padding: 0.05rem 0.4rem;
+        border-radius: 999px;
+        font-size: 0.7rem;
+        background: #fef3c7;
+        color: #92400e;
+        text-transform: uppercase;
+      }
       th.sortable {
         cursor: pointer;
         user-select: none;
@@ -253,12 +263,20 @@
             const attrs = item.attributes || {};
 
             const displayStatus = getDisplayStatus(item);
+            const needsMetadata = !!attrs.needs_metadata;
 
             const statusTd = document.createElement('td');
             const pill = document.createElement('span');
             pill.className = 'status-pill ' + statusClass(displayStatus);
             pill.textContent = displayStatus;
             statusTd.appendChild(pill);
+
+            if (needsMetadata) {
+              const tag = document.createElement('span');
+              tag.className = 'needs-metadata-tag';
+              tag.textContent = 'needs metadata';
+              statusTd.appendChild(tag);
+            }
             tr.appendChild(statusTd);
 
             const fileNameTd = document.createElement('td');
