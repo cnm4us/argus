@@ -116,6 +116,19 @@
       .status-line.error {
         color: #b91c1c;
       }
+      th.sortable {
+        cursor: pointer;
+        user-select: none;
+      }
+      .sort-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+      }
+      .sort-arrow {
+        font-size: 0.75rem;
+        color: #6b7280;
+      }
     </style>
   </head>
   <body>
@@ -138,11 +151,36 @@
       <table>
         <thead>
           <tr>
-            <th>Status</th>
-            <th>File Name</th>
-            <th>Document Type</th>
-            <th>Date</th>
-            <th>Provider</th>
+            <th class="sortable" data-sort-key="status">
+              <span class="sort-label">
+                <span>Status</span>
+                <span class="sort-arrow"></span>
+              </span>
+            </th>
+            <th class="sortable" data-sort-key="file_name">
+              <span class="sort-label">
+                <span>File Name</span>
+                <span class="sort-arrow"></span>
+              </span>
+            </th>
+            <th class="sortable" data-sort-key="document_type">
+              <span class="sort-label">
+                <span>Document Type</span>
+                <span class="sort-arrow"></span>
+              </span>
+            </th>
+            <th class="sortable" data-sort-key="date">
+              <span class="sort-label">
+                <span>Date</span>
+                <span class="sort-arrow"></span>
+              </span>
+            </th>
+            <th class="sortable" data-sort-key="provider_name">
+              <span class="sort-label">
+                <span>Provider</span>
+                <span class="sort-arrow"></span>
+              </span>
+            </th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -155,6 +193,13 @@
       const uploadBtn = document.getElementById('upload-btn');
       const statusEl = document.getElementById('status');
       const tableBody = document.getElementById('table-body');
+      const headerCells = Array.from(
+        document.querySelectorAll('th.sortable'),
+      );
+
+      let currentItems = [];
+      let sortKey = 'date';
+      let sortDirection = 'desc'; // 'asc' | 'desc'
 
       function statusClass(status) {
         if (status === 'completed') return 'status-completed';
@@ -163,37 +208,51 @@
         return 'status-default';
       }
 
-      async function loadDocuments() {
-        statusEl.textContent = 'Loading…';
-        statusEl.className = 'status-line';
-        refreshBtn.disabled = true;
+      function getDisplayStatus(item) {
+        const attrs = item.attributes || {};
+        const hasMetadata = !!attrs.has_metadata;
+        return hasMetadata ? 'completed' : 'processing';
+      }
+
+      function getSortValue(item, key) {
+        const attrs = item.attributes || {};
+        switch (key) {
+          case 'status':
+            return getDisplayStatus(item);
+          case 'file_name':
+            return (attrs.file_name || '').toLowerCase();
+          case 'document_type':
+            return (attrs.document_type || '').toLowerCase();
+          case 'provider_name':
+            return (attrs.provider_name || '').toLowerCase();
+          case 'date':
+            return attrs.date || '';
+          default:
+            return '';
+        }
+      }
+
+      function updateHeaderSortIndicators() {
+        headerCells.forEach((th) => {
+          const key = th.getAttribute('data-sort-key');
+          const arrowEl = th.querySelector('.sort-arrow');
+          if (!arrowEl) return;
+          if (key === sortKey) {
+            arrowEl.textContent = sortDirection === 'asc' ? '▲' : '▼';
+          } else {
+            arrowEl.textContent = '';
+          }
+        });
+      }
+
+      function renderDocuments(items) {
         tableBody.innerHTML = '';
 
-        try {
-          const res = await fetch('/api/documents/db', {});
-
-          const json = await res.json();
-          if (!res.ok) {
-            statusEl.textContent = 'Error loading documents: ' + (json.error || res.status);
-            statusEl.className = 'status-line error';
-            return;
-          }
-
-          const items = json.items || [];
-          if (items.length === 0) {
-            statusEl.textContent = 'No documents found.';
-            statusEl.className = 'status-line';
-          } else {
-            statusEl.textContent = `Loaded ${items.length} document(s).`;
-            statusEl.className = 'status-line';
-          }
-
-          for (const item of items) {
+        for (const item of items) {
             const tr = document.createElement('tr');
             const attrs = item.attributes || {};
 
-            const hasMetadata = !!attrs.has_metadata;
-            const displayStatus = hasMetadata ? 'completed' : 'processing';
+            const displayStatus = getDisplayStatus(item);
 
             const statusTd = document.createElement('td');
             const pill = document.createElement('span');
@@ -274,7 +333,51 @@
             tr.appendChild(actionsTd);
 
             tableBody.appendChild(tr);
+        }
+      }
+
+      function applySortAndRender() {
+        const items = [...currentItems];
+        items.sort((a, b) => {
+          const va = getSortValue(a, sortKey);
+          const vb = getSortValue(b, sortKey);
+          if (va === vb) return 0;
+          if (sortDirection === 'asc') {
+            return va < vb ? -1 : 1;
           }
+          return va > vb ? -1 : 1;
+        });
+        updateHeaderSortIndicators();
+        renderDocuments(items);
+      }
+
+      async function loadDocuments() {
+        statusEl.textContent = 'Loading…';
+        statusEl.className = 'status-line';
+        refreshBtn.disabled = true;
+        tableBody.innerHTML = '';
+
+        try {
+          const res = await fetch('/api/documents/db', {});
+
+          const json = await res.json();
+          if (!res.ok) {
+            statusEl.textContent =
+              'Error loading documents: ' + (json.error || res.status);
+            statusEl.className = 'status-line error';
+            return;
+          }
+
+          currentItems = json.items || [];
+          if (currentItems.length === 0) {
+            statusEl.textContent = 'No documents found.';
+            statusEl.className = 'status-line';
+          } else {
+            statusEl.textContent = `Loaded ${currentItems.length} document(s).`;
+            statusEl.className = 'status-line';
+          }
+
+          applySortAndRender();
         } catch (err) {
           console.error(err);
           statusEl.textContent = 'Unexpected error loading documents.';
@@ -290,6 +393,20 @@
 
       uploadBtn.addEventListener('click', () => {
         window.location.href = '/upload.html';
+      });
+
+      headerCells.forEach((th) => {
+        th.addEventListener('click', () => {
+          const key = th.getAttribute('data-sort-key');
+          if (!key) return;
+          if (sortKey === key) {
+            sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+          } else {
+            sortKey = key;
+            sortDirection = key === 'date' ? 'desc' : 'asc';
+          }
+          applySortAndRender();
+        });
       });
 
       // Initial load

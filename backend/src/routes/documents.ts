@@ -33,78 +33,101 @@ async function extractMetadata(
   fileId: string,
   fileName: string,
 ): Promise<DocumentMetadata | null> {
-  try {
-    logOpenAI('extractMetadata:start', {
-      documentType,
-      fileId,
-      fileName,
-    });
+  const maxAttempts = 3;
+  const baseDelayMs = 4000;
 
-    const template = await loadTemplateForDocumentType(documentType);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      logOpenAI('extractMetadata:start', {
+        documentType,
+        fileId,
+        fileName,
+        attempt,
+      });
 
-    const response = await openai.responses.create({
-      model: 'gpt-4.1',
-      instructions: template,
-      input: [
-        {
-          role: 'user',
-          type: 'message',
-          content: [
-            {
-              type: 'input_text',
-              text: 'Use the provided instructions and this document to produce the requested JSON metadata.',
-            },
-            {
-              type: 'input_file',
-              file_id: fileId,
-            },
-          ],
+      const template = await loadTemplateForDocumentType(documentType);
+
+      const response = await openai.responses.create({
+        model: 'gpt-4.1',
+        instructions: template,
+        input: [
+          {
+            role: 'user',
+            type: 'message',
+            content: [
+              {
+                type: 'input_text',
+                text: 'Use the provided instructions and this document to produce the requested JSON metadata.',
+              },
+              {
+                type: 'input_file',
+                file_id: fileId,
+              },
+            ],
+          },
+        ],
+        text: {
+          format: { type: 'json_object' },
         },
-      ],
-      text: {
-        format: { type: 'json_object' },
-      },
-    });
+      });
 
-    const rawText =
-      ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
-      ((response as any).output_text as string | undefined);
+      const rawText =
+        ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
+        ((response as any).output_text as string | undefined);
 
-    if (!rawText) {
-      console.warn('Metadata extraction: no text output from model');
+      if (!rawText) {
+        console.warn('Metadata extraction: no text output from model');
+        return null;
+      }
+
+      const parsed = JSON.parse(rawText) as DocumentMetadata;
+
+      // Ensure some fields are filled from known context if missing.
+      if (!parsed.document_type) {
+        parsed.document_type = documentType;
+      }
+      if (!parsed.file_id) {
+        parsed.file_id = fileId;
+      }
+      if (!parsed.file_name) {
+        parsed.file_name = fileName;
+      }
+
+      logOpenAI('extractMetadata:success', {
+        documentType,
+        fileId,
+        fileName,
+        attempt,
+      });
+
+      return parsed;
+    } catch (error) {
+      const status = (error as any)?.status;
+      const message =
+        error instanceof Error ? error.message : String(error ?? '');
+
+      logOpenAI('extractMetadata:error', {
+        attempt,
+        status,
+        error:
+          error instanceof Error
+            ? { message: error.message, stack: error.stack }
+            : error,
+      });
+
+      // Simple retry for OpenAI rate limits (429).
+      if (status === 429 && attempt < maxAttempts) {
+        const delay = baseDelayMs * attempt;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+
+      console.error('Metadata extraction failed:', error);
       return null;
     }
-
-    const parsed = JSON.parse(rawText) as DocumentMetadata;
-
-    // Ensure some fields are filled from known context if missing.
-    if (!parsed.document_type) {
-      parsed.document_type = documentType;
-    }
-    if (!parsed.file_id) {
-      parsed.file_id = fileId;
-    }
-    if (!parsed.file_name) {
-      parsed.file_name = fileName;
-    }
-
-    logOpenAI('extractMetadata:success', {
-      documentType,
-      fileId,
-      fileName,
-    });
-
-    return parsed;
-  } catch (error) {
-    console.error('Metadata extraction failed:', error);
-    logOpenAI('extractMetadata:error', {
-      error:
-        error instanceof Error
-          ? { message: error.message, stack: error.stack }
-          : error,
-    });
-    return null;
   }
+
+  return null;
 }
 
 // POST /api/documents
@@ -278,10 +301,20 @@ router.post(
             updatedAttributes.has_metadata = true;
 
             if (config.vectorStoreId) {
-              await openai.vectorStores.files.update(vectorStoreFile.id, {
-                vector_store_id: config.vectorStoreId,
-                attributes: updatedAttributes,
-              });
+              try {
+                await openai.vectorStores.files.update(vectorStoreFile.id, {
+                  vector_store_id: config.vectorStoreId,
+                  attributes: updatedAttributes,
+                });
+              } catch (err) {
+                logOpenAI('backgroundMetadata:attributes_error', {
+                  error:
+                    err instanceof Error
+                      ? { message: err.message, stack: err.stack }
+                      : err,
+                  vectorStoreFileId: vectorStoreFile.id,
+                });
+              }
             }
 
             try {

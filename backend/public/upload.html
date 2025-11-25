@@ -81,14 +81,81 @@
       .status.success {
         color: #166534;
       }
-      pre {
-        background: #111827;
-        color: #e5e7eb;
-        padding: 0.75rem;
-        border-radius: 4px;
-        overflow: auto;
+      .dropzone {
+        margin-top: 1rem;
+        padding: 1.25rem;
+        border-radius: 8px;
+        border: 2px dashed #9ca3af;
+        text-align: center;
+        color: #4b5563;
+        background: #f9fafb;
+        cursor: pointer;
+      }
+      .dropzone.dragover {
+        border-color: #2563eb;
+        background: #eff6ff;
+        color: #1d4ed8;
+      }
+      .hint {
+        font-size: 0.85rem;
+        color: #6b7280;
+        margin-top: 0.25rem;
+      }
+      .uploads {
+        margin-top: 1rem;
+      }
+      .upload-item {
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        padding: 0.5rem 0.75rem;
+        margin-bottom: 0.5rem;
+        font-size: 0.85rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+      .upload-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .upload-filename {
+        font-weight: 500;
+        color: #111827;
+        word-break: break-all;
+      }
+      .upload-status {
         font-size: 0.8rem;
-        max-height: 320px;
+        color: #6b7280;
+      }
+      .upload-status.error {
+        color: #b91c1c;
+      }
+      .upload-status.success {
+        color: #166534;
+      }
+      .progress-bar {
+        position: relative;
+        width: 100%;
+        height: 6px;
+        border-radius: 999px;
+        background: #e5e7eb;
+        overflow: hidden;
+      }
+      .progress-bar-inner {
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 0%;
+        background: #2563eb;
+        transition: width 0.15s linear, background-color 0.15s linear;
+      }
+      .progress-bar-inner.success {
+        background: #16a34a;
+      }
+      .progress-bar-inner.error {
+        background: #b91c1c;
       }
     </style>
   </head>
@@ -107,7 +174,7 @@
         extracted metadata for inspection.
       </p>
 
-      <form id="upload-form">
+      <form id="upload-form" onsubmit="return false;">
         <label for="document_type">Document Type</label>
         <select id="document_type" name="document_type" required>
           <option value="">Select type…</option>
@@ -133,73 +200,182 @@
           <option value="legal_document">legal_document</option>
         </select>
 
-        <label for="file">PDF File</label>
-        <input id="file" name="file" type="file" accept="application/pdf" required />
-
-        <button type="submit" id="submit-btn">Upload</button>
+        <label>PDF Files</label>
+        <input
+          id="file"
+          name="file"
+          type="file"
+          accept="application/pdf"
+          multiple
+          style="display: none"
+        />
+        <div id="dropzone" class="dropzone">
+          Drag and drop PDF files here, or click to browse.
+          <div class="hint">
+            All selected files will use the chosen document type and upload
+            asynchronously.
+          </div>
+        </div>
       </form>
 
       <div id="status" class="status"></div>
-      <pre id="response" hidden></pre>
+      <div id="uploads" class="uploads"></div>
     </div>
 
     <script>
-      const form = document.getElementById('upload-form');
       const statusEl = document.getElementById('status');
-      const responseEl = document.getElementById('response');
-      const submitBtn = document.getElementById('submit-btn');
+      const documentTypeSelect = document.getElementById('document_type');
+      const fileInput = document.getElementById('file');
+      const dropzone = document.getElementById('dropzone');
+      const uploadsContainer = document.getElementById('uploads');
 
-      form.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        statusEl.textContent = '';
+      function setStatus(message, type) {
+        statusEl.textContent = message || '';
         statusEl.className = 'status';
-        responseEl.hidden = true;
-        responseEl.textContent = '';
+        if (type === 'error') statusEl.classList.add('error');
+        if (type === 'success') statusEl.classList.add('success');
+      }
 
-        const documentType = document.getElementById('document_type').value;
-        const fileInput = document.getElementById('file');
-        const file = fileInput.files[0];
+      function createUploadItem(fileName) {
+        const item = document.createElement('div');
+        item.className = 'upload-item';
 
-        if (!documentType || !file) {
-          statusEl.textContent = 'Document type and file are required.';
-          statusEl.classList.add('error');
-          return;
-        }
+        const header = document.createElement('div');
+        header.className = 'upload-header';
+
+        const nameEl = document.createElement('div');
+        nameEl.className = 'upload-filename';
+        nameEl.textContent = fileName;
+
+        const statusEl = document.createElement('div');
+        statusEl.className = 'upload-status';
+        statusEl.textContent = 'Queued…';
+
+        header.appendChild(nameEl);
+        header.appendChild(statusEl);
+
+        const progressBar = document.createElement('div');
+        progressBar.className = 'progress-bar';
+        const progressInner = document.createElement('div');
+        progressInner.className = 'progress-bar-inner';
+        progressBar.appendChild(progressInner);
+
+        item.appendChild(header);
+        item.appendChild(progressBar);
+
+        uploadsContainer.prepend(item);
+
+        return { item, statusEl, progressInner };
+      }
+
+      function uploadFile(file, documentType) {
+        const ui = createUploadItem(file.name);
+        ui.statusEl.textContent = 'Uploading…';
 
         const formData = new FormData();
         formData.append('document_type', documentType);
         formData.append('file', file);
 
-        submitBtn.disabled = true;
-        statusEl.textContent = 'Uploading and processing…';
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/documents?async=1');
 
-        try {
-          const res = await fetch('/api/documents?async=1', {
-            method: 'POST',
-            body: formData,
-          });
-
-          const json = await res.json().catch(() => null);
-
-          if (!res.ok) {
-            statusEl.textContent =
-              'Upload failed: ' +
-              (json && (json.error || json.message) ? json.error || json.message : res.status);
-            statusEl.classList.add('error');
-            return;
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            ui.progressInner.style.width = `${percent}%`;
           }
+        };
 
-          statusEl.textContent = 'Upload complete.';
-          statusEl.classList.add('success');
+        xhr.onreadystatechange = () => {
+          if (xhr.readyState !== XMLHttpRequest.DONE) return;
 
-          responseEl.hidden = false;
-          responseEl.textContent = JSON.stringify(json, null, 2);
-        } catch (err) {
-          console.error(err);
-          statusEl.textContent = 'Unexpected error during upload.';
-          statusEl.classList.add('error');
-        } finally {
-          submitBtn.disabled = false;
+          if (xhr.status >= 200 && xhr.status < 300) {
+            ui.progressInner.style.width = '100%';
+            ui.progressInner.classList.add('success');
+            ui.statusEl.textContent = 'Upload complete (metadata processing in background)…';
+            ui.statusEl.classList.remove('error');
+            ui.statusEl.classList.add('success');
+            setStatus('', '');
+          } else {
+            ui.progressInner.classList.add('error');
+            ui.statusEl.textContent =
+              'Upload failed: ' + (xhr.responseText || xhr.status);
+            ui.statusEl.classList.remove('success');
+            ui.statusEl.classList.add('error');
+            setStatus('One or more uploads failed.', 'error');
+          }
+        };
+
+        xhr.onerror = () => {
+          ui.progressInner.classList.add('error');
+          ui.statusEl.textContent = 'Upload error.';
+          ui.statusEl.classList.remove('success');
+          ui.statusEl.classList.add('error');
+          setStatus('One or more uploads failed.', 'error');
+        };
+
+        xhr.send(formData);
+      }
+
+      function handleFiles(fileList) {
+        setStatus('', '');
+
+        const documentType = documentTypeSelect.value;
+        if (!documentType) {
+          setStatus('Select a document type before uploading.', 'error');
+          return;
+        }
+
+        const files = Array.from(fileList || []).filter((file) => {
+          return (
+            file.type === 'application/pdf' ||
+            file.name.toLowerCase().endsWith('.pdf')
+          );
+        });
+
+        if (files.length === 0) {
+          setStatus('Please select one or more PDF files.', 'error');
+          return;
+        }
+
+        setStatus(`Uploading ${files.length} file(s)…`, '');
+
+        for (const file of files) {
+          uploadFile(file, documentType);
+        }
+      }
+
+      dropzone.addEventListener('click', () => {
+        fileInput.click();
+      });
+
+      fileInput.addEventListener('change', (event) => {
+        if (event.target.files && event.target.files.length > 0) {
+          handleFiles(event.target.files);
+          fileInput.value = '';
+        }
+      });
+
+      dropzone.addEventListener('dragover', (event) => {
+        event.preventDefault();
+        dropzone.classList.add('dragover');
+      });
+
+      dropzone.addEventListener('dragenter', (event) => {
+        event.preventDefault();
+        dropzone.classList.add('dragover');
+      });
+
+      dropzone.addEventListener('dragleave', (event) => {
+        event.preventDefault();
+        dropzone.classList.remove('dragover');
+      });
+
+      dropzone.addEventListener('drop', (event) => {
+        event.preventDefault();
+        dropzone.classList.remove('dragover');
+        if (event.dataTransfer && event.dataTransfer.files.length > 0) {
+          handleFiles(event.dataTransfer.files);
         }
       });
     </script>
