@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+
+# Simple CLI wrapper for listing S3 objects used by Argus.
+#
+# Usage (from repo root):
+#   scripts/s3 list objects [prefix]
+#
+# Configuration:
+#   - Reads ARGUS_S3_BUCKET and ARGUS_S3_PREFIX from the environment if set.
+#   - Otherwise, attempts to read them from backend/.env.
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="$ROOT_DIR/backend/.env"
+
+S3_BUCKET="${S3_BUCKET:-${ARGUS_S3_BUCKET:-}}"
+S3_PREFIX="${S3_PREFIX:-${ARGUS_S3_PREFIX:-}}"
+
+if [[ -z "$S3_BUCKET" && -f "$ENV_FILE" ]]; then
+  S3_BUCKET="$(grep '^ARGUS_S3_BUCKET=' "$ENV_FILE" | cut -d= -f2- || true)"
+fi
+
+if [[ -z "$S3_PREFIX" && -f "$ENV_FILE" ]]; then
+  S3_PREFIX="$(grep '^ARGUS_S3_PREFIX=' "$ENV_FILE" | cut -d= -f2- || true)"
+fi
+
+if [[ -z "$S3_BUCKET" ]]; then
+  echo "ARGUS_S3_BUCKET / S3_BUCKET is not set and could not be read from backend/.env" >&2
+  exit 1
+fi
+
+if ! command -v aws >/dev/null 2>&1; then
+  echo "The 'aws' CLI is required (awscli). Please install and configure it first." >&2
+  exit 1
+fi
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  list)
+    sub="${1:-}"
+    shift || true
+    if [[ "$sub" != "objects" ]]; then
+      echo "Usage: scripts/s3 list objects [prefix]" >&2
+      exit 1
+    fi
+
+    user_prefix="${1:-}"
+    prefix="${user_prefix:-$S3_PREFIX}"
+
+    args=(s3api list-objects-v2 --bucket "$S3_BUCKET")
+    if [[ -n "$prefix" ]]; then
+      args+=(--prefix "$prefix")
+    fi
+
+    aws "${args[@]}"
+    ;;
+
+  *)
+    echo "Usage:" >&2
+    echo "  scripts/s3 list objects [prefix]" >&2
+    exit 1
+    ;;
+esac
+
