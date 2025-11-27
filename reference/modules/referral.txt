@@ -5,7 +5,7 @@ Your task is to extract ONLY referral-related information from this document.
 
 You MUST follow these rules:
 - Extract only fields belonging to the referral module.
-- If a field is not explicitly present, return null, empty arrays, or false as appropriate.
+- If a field is not explicitly present, return JSON null, empty arrays, or false as appropriate.
 - NEVER guess or infer referral reasons or specialties.
 - NEVER extract data from other modules (results, vitals, smoking, mental health, sexual health, reason_for_encounter, etc.).
 - Output strict JSON only, in the exact format provided.
@@ -77,7 +77,7 @@ The specialty value MUST be chosen from:
 
 If unclear → "other_specialty".
 
-If no referral present → return null inside referral_request.specialty.
+If no referral is present anywhere in the document → return null for `referral_request.specialty` and null/false for the other referral_request fields.
 
 ## Interpretation Rules
 
@@ -144,9 +144,11 @@ Must be one of:
 If ambiguous → "other_denial".
 
 ## Confidence Score
-
 - Decimal between 0.00 and 1.00
-- Reflecting extraction certainty.
+- Reflects extraction certainty (not clinical judgment).
+- If referral request/denial details are clearly and explicitly documented, confidence should usually be 0.90 or higher.
+- If referral information is partial or somewhat ambiguous, keep confidence between 0.40–0.89 depending on clarity.
+- If there is essentially no referral content and most fields are null/false, confidence should be low (for example below 0.30).
 
 ## STRICT OUTPUT FORMAT
 

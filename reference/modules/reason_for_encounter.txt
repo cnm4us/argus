@@ -7,8 +7,8 @@ You MUST follow these rules:
 - Extract only the reason_for_encounter module.
 - Choose exactly one of the allowed options.
 - You MUST NOT return multiple reasons. Choose the primary reason.
-- If no reason is stated or implied → return "unknown".
-- Do NOT infer or guess beyond what is supported by the text.
+- If no reason is stated or reasonably implied anywhere in the document, return "unknown".
+- Do NOT invent a reason that is not supported by the text.
 - Do NOT extract any data from other modules (smoking, sexual health, vitals, etc.).
 - Output strict JSON only.
 
@@ -42,6 +42,13 @@ Pick the one that reflects the primary clinical purpose of the encounter.
 - patient_question — reassurance, advice, non-symptom questions.
 - mental_health_concern — anxiety, depression, emotional distress.
 - unknown — use ONLY when no reason is explicitly stated or implied.
+
+## Confidence Score
+- Must be a decimal 0.00–1.00
+- Reflects certainty of the chosen primary reason.
+- If the reason is clearly documented (for example in chief complaint or assessment/plan), confidence should usually be 0.90 or higher.
+- If the reason is somewhat indirect but still reasonably clear, keep confidence between 0.40–0.89 depending on clarity.
+- If the reason is essentially unknown and you must output "unknown", confidence should be low (for example below 0.30).
 
 ## Output Format (STRICT JSON)
 {

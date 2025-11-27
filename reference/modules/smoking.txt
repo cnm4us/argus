@@ -5,7 +5,7 @@ Your task is to extract ONLY smoking-related information from this document.
 
 You MUST follow these rules:
 - Extract ONLY fields belonging to the smoking module.
-- If a field is not explicitly stated, return null (or false for booleans).
+- If a field is not explicitly stated, return JSON null (or false for booleans).
 - Do NOT guess, infer, estimate, or derive pack-years unless explicitly documented.
 - Do NOT extract data from ANY other modules.
 - Keep all output strict JSON, in the exact schema provided.
@@ -97,8 +97,11 @@ This captures standard-of-care behavior.
 - NEVER calculate it from “spent 20 minutes talking.”
 
 ## Confidence Score
-Must be a decimal 0.00–1.00
-Reflects extraction certainty — NOT clinical truth.
+- Must be a decimal 0.00–1.00
+- Reflects extraction certainty — NOT clinical truth.
+- If smoking history and/or counseling details are clearly and explicitly documented, confidence should usually be 0.90 or higher.
+- If details are partial, inconsistent, or weakly implied, keep confidence between 0.40–0.89 depending on clarity.
+- If there is essentially no smoking content and most fields are null/false, confidence should be low (for example below 0.30).
 
 ## STRICT JSON OUTPUT FORMAT
 {

@@ -5,7 +5,7 @@ Your task is to extract ONLY sexual health and STI-related information from this
 
 You MUST follow these rules:
 - Extract only the fields in the sexual_health module.
-- If information is not explicitly documented, return null, empty arrays, or false as appropriate.
+- If information is not explicitly documented, return JSON null, empty arrays, or false as appropriate.
 - Do NOT infer or guess.
 - Do NOT use contextual assumptions.
 - Do NOT extract information from unrelated modules (smoking, mental health, vitals, referral, results, etc.).
@@ -145,8 +145,11 @@ False otherwise.
 Only extract if explicit.
 
 ## Confidence Score
-confidence must be 0.00–1.00
-Represents certainty that extraction is correct.
+- confidence must be 0.00–1.00
+- Represents certainty that extraction is correct (not clinical judgment).
+- If sexual health activity, risk factors, testing, and/or counseling are clearly and explicitly documented, confidence should usually be 0.90 or higher.
+- If details are partial or only weakly implied, keep confidence between 0.40–0.89 depending on clarity.
+- If there is essentially no sexual health content and most fields are null/false/empty, confidence should be low (for example below 0.30).
 
 ## STRICT OUTPUT FORMAT
 {

@@ -25,7 +25,7 @@ export async function getDb(): Promise<mysql.Pool> {
 export async function initDb(): Promise<void> {
   const db = await getDb();
 
-  const createTableSQL = `
+  const createDocumentsTableSQL = `
     CREATE TABLE IF NOT EXISTS documents (
       id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
       vector_store_file_id VARCHAR(128) NOT NULL,
@@ -50,7 +50,7 @@ export async function initDb(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `;
 
-  await db.query(createTableSQL);
+  await db.query(createDocumentsTableSQL);
 
   // Backfill for existing installations: ensure s3_key column exists.
   const [rows] = (await db.query(
@@ -86,4 +86,118 @@ export async function initDb(): Promise<void> {
       `,
     );
   }
+
+  const createDocumentVitalsTableSQL = `
+    CREATE TABLE IF NOT EXISTS document_vitals (
+      document_id              INT UNSIGNED NOT NULL PRIMARY KEY,
+      encounter_date           DATE         NULL,
+      has_vitals               TINYINT(1)   NOT NULL DEFAULT 0,
+      spo2                     TINYINT UNSIGNED NULL,
+      spo2_is_low              TINYINT(1)   NOT NULL DEFAULT 0,
+      blood_pressure_systolic  SMALLINT UNSIGNED NULL,
+      blood_pressure_diastolic SMALLINT UNSIGNED NULL,
+      heart_rate               SMALLINT UNSIGNED NULL,
+      respiratory_rate         SMALLINT UNSIGNED NULL,
+      temperature_f            DECIMAL(4,1) NULL,
+      oxygen_device            ENUM('room_air','nasal_cannula','non_rebreather','other','not_documented') NULL,
+      height_inches            SMALLINT UNSIGNED NULL,
+      weight_pounds            SMALLINT UNSIGNED NULL,
+      bmi                      DECIMAL(4,1) NULL,
+      created_at               DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at               DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_vitals_spo2 (spo2),
+      KEY idx_vitals_has_vitals (has_vitals, spo2),
+      KEY idx_vitals_date (encounter_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
+  const createDocumentSmokingTableSQL = `
+    CREATE TABLE IF NOT EXISTS document_smoking (
+      document_id                       INT UNSIGNED NOT NULL PRIMARY KEY,
+      encounter_date                    DATE         NULL,
+      patient_status                    ENUM('current','former','unknown') NULL,
+      patient_years_smoked              SMALLINT UNSIGNED NULL,
+      patient_pack_years                DECIMAL(5,1) NULL,
+      provider_status                   ENUM('current','former','never','unknown') NULL,
+      provider_years_smoked             SMALLINT UNSIGNED NULL,
+      provider_pack_years               DECIMAL(5,1) NULL,
+      has_smoking_history_documented    TINYINT(1)   NOT NULL DEFAULT 0,
+      has_cessation_counseling          TINYINT(1)   NOT NULL DEFAULT 0,
+      advised_to_quit                   TINYINT(1)   NOT NULL DEFAULT 0,
+      pharm_nicotine_replacement        TINYINT(1)   NOT NULL DEFAULT 0,
+      pharm_varenicline_chantix         TINYINT(1)   NOT NULL DEFAULT 0,
+      pharm_bupropion                   TINYINT(1)   NOT NULL DEFAULT 0,
+      behavioral_therapy_offered        TINYINT(1)   NOT NULL DEFAULT 0,
+      quitline_offered                  TINYINT(1)   NOT NULL DEFAULT 0,
+      support_group_offered             TINYINT(1)   NOT NULL DEFAULT 0,
+      referral_smoking_program          TINYINT(1)   NOT NULL DEFAULT 0,
+      referral_behavioral_health        TINYINT(1)   NOT NULL DEFAULT 0,
+      follow_up_plans_documented        TINYINT(1)   NOT NULL DEFAULT 0,
+      counseling_time_minutes           SMALLINT UNSIGNED NULL,
+      created_at                        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at                        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_smoking_counseling (has_cessation_counseling, encounter_date),
+      KEY idx_smoking_history (has_smoking_history_documented, encounter_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
+  const createDocumentMentalHealthTableSQL = `
+    CREATE TABLE IF NOT EXISTS document_mental_health (
+      document_id                    INT UNSIGNED NOT NULL PRIMARY KEY,
+      encounter_date                 DATE         NULL,
+      has_mental_health_content      TINYINT(1)   NOT NULL DEFAULT 0,
+      affect_anxious                 TINYINT(1)   NOT NULL DEFAULT 0,
+      affect_depressed               TINYINT(1)   NOT NULL DEFAULT 0,
+      affect_tearful                 TINYINT(1)   NOT NULL DEFAULT 0,
+      affect_labile                  TINYINT(1)   NOT NULL DEFAULT 0,
+      affect_flat_or_blunted         TINYINT(1)   NOT NULL DEFAULT 0,
+      behavior_emotionally_distressed TINYINT(1)  NOT NULL DEFAULT 0,
+      behavior_non_compliant         TINYINT(1)   NOT NULL DEFAULT 0,
+      behavior_guarded_or_hostile    TINYINT(1)   NOT NULL DEFAULT 0,
+      pressured_speech               TINYINT(1)   NOT NULL DEFAULT 0,
+      symptom_anxiety                TINYINT(1)   NOT NULL DEFAULT 0,
+      symptom_depression             TINYINT(1)   NOT NULL DEFAULT 0,
+      symptom_stress                 TINYINT(1)   NOT NULL DEFAULT 0,
+      symptom_panic                  TINYINT(1)   NOT NULL DEFAULT 0,
+      symptom_insomnia               TINYINT(1)   NOT NULL DEFAULT 0,
+      dx_any_mental_health           TINYINT(1)   NOT NULL DEFAULT 0,
+      dx_anxiety_disorder            TINYINT(1)   NOT NULL DEFAULT 0,
+      dx_depressive_disorder         TINYINT(1)   NOT NULL DEFAULT 0,
+      dx_adjustment_disorder         TINYINT(1)   NOT NULL DEFAULT 0,
+      dx_ptsd                        TINYINT(1)   NOT NULL DEFAULT 0,
+      dx_bipolar_disorder            TINYINT(1)   NOT NULL DEFAULT 0,
+      dx_substance_use_disorder      TINYINT(1)   NOT NULL DEFAULT 0,
+      created_at                     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at                     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_mh_any (has_mental_health_content, encounter_date),
+      KEY idx_mh_anxiety (symptom_anxiety, encounter_date),
+      KEY idx_mh_pressured (pressured_speech, encounter_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
+  const createDocumentReferralsTableSQL = `
+    CREATE TABLE IF NOT EXISTS document_referrals (
+      document_id                               INT UNSIGNED NOT NULL PRIMARY KEY,
+      encounter_date                            DATE         NULL,
+      has_referral_request                      TINYINT(1)   NOT NULL DEFAULT 0,
+      referral_specialty                        VARCHAR(64)  NULL,
+      referral_reason_text                      TEXT         NULL,
+      referral_patient_requested                TINYINT(1)   NOT NULL DEFAULT 0,
+      referral_provider_initiated               TINYINT(1)   NOT NULL DEFAULT 0,
+      has_referral_denial                       TINYINT(1)   NOT NULL DEFAULT 0,
+      referral_denial_type                      ENUM('insurance_denial','clinical_denial','administrative_denial','other_denial') NULL,
+      referral_denial_reason_text               TEXT         NULL,
+      reason_mentions_copd                      TINYINT(1)   NOT NULL DEFAULT 0,
+      reason_mentions_emphysema_or_obstructive_lung TINYINT(1) NOT NULL DEFAULT 0,
+      created_at                                DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at                                DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_ref_specialty (referral_specialty, encounter_date),
+      KEY idx_ref_copd (reason_mentions_copd, encounter_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
+  await db.query(createDocumentVitalsTableSQL);
+  await db.query(createDocumentSmokingTableSQL);
+  await db.query(createDocumentMentalHealthTableSQL);
+  await db.query(createDocumentReferralsTableSQL);
 }

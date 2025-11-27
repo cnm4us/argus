@@ -10,10 +10,17 @@ import {
   type DocumentType,
   type DocumentMetadata,
 } from '../documentTypes';
-import { loadTemplateForDocumentType, loadClassificationTemplate } from '../templates';
+import {
+  loadTemplateForDocumentType,
+  loadClassificationTemplate,
+  loadHighLevelClassificationTemplate,
+  loadModuleSelectionTemplate,
+  loadModuleTemplate,
+} from '../templates';
 import { getDb } from '../db';
 import { uploadPdfToS3, deleteObjectFromS3 } from '../s3Client';
 import { logOpenAI } from '../logger';
+import { updateDocumentProjectionsForVectorStoreFile } from '../metadataProjections';
 
 const router = express.Router();
 
@@ -141,6 +148,35 @@ interface ClassificationResult {
   rawLabel?: string;
 }
 
+type HighLevelType =
+  | 'clinical_encounter'
+  | 'communication'
+  | 'result'
+  | 'referral'
+  | 'administrative'
+  | 'external_record';
+
+interface HighLevelClassificationResult {
+  type: HighLevelType;
+  confidence: number | null;
+}
+
+type ModuleName =
+  | 'provider'
+  | 'patient'
+  | 'reason_for_encounter'
+  | 'vitals'
+  | 'smoking'
+  | 'sexual_health'
+  | 'mental_health'
+  | 'referral'
+  | 'results'
+  | 'communication';
+
+interface ModuleSelectionResult {
+  modules: ModuleName[];
+}
+
 async function classifyDocument(
   fileId: string,
   fileName: string,
@@ -243,6 +279,337 @@ async function classifyDocument(
     };
   } catch (error) {
     logOpenAI('classify:error', {
+      fileId,
+      fileName,
+      error:
+        error instanceof Error
+          ? { message: error.message, stack: error.stack }
+          : error,
+    });
+    return null;
+  }
+}
+
+async function runSelectedModulesForFile(
+  fileId: string,
+  fileName: string,
+  selection: ModuleSelectionResult | null,
+): Promise<Record<string, any>> {
+  const results: Record<string, any> = {};
+
+  if (!selection || !Array.isArray(selection.modules) || selection.modules.length === 0) {
+    return results;
+  }
+
+  for (const moduleName of selection.modules) {
+    try {
+      logOpenAI('moduleExtract:start', {
+        fileId,
+        fileName,
+        module: moduleName,
+      });
+
+      const template = await loadModuleTemplate(moduleName);
+
+      const response = await openai.responses.create({
+        model: 'gpt-4.1',
+        instructions: template,
+        input: [
+          {
+            role: 'user',
+            type: 'message',
+            content: [
+              {
+                type: 'input_text',
+                text: 'Extract this module according to the instructions and output strict JSON only.',
+              },
+              {
+                type: 'input_file',
+                file_id: fileId,
+              },
+            ],
+          },
+        ],
+        text: {
+          format: { type: 'json_object' },
+        },
+      });
+
+      const rawText =
+        ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
+        ((response as any).output_text as string | undefined);
+
+      if (!rawText) {
+        logOpenAI('moduleExtract:error', {
+          fileId,
+          fileName,
+          module: moduleName,
+          error: { message: 'No text output from module extraction model' },
+        });
+        continue;
+      }
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch (err) {
+        logOpenAI('moduleExtract:error', {
+          fileId,
+          fileName,
+          module: moduleName,
+          error: {
+            message: 'Failed to parse module extraction JSON',
+            rawText: rawText.slice(0, 500),
+          },
+        });
+        continue;
+      }
+
+      results[moduleName] = parsed;
+
+      logOpenAI('moduleExtract:success', {
+        fileId,
+        fileName,
+        module: moduleName,
+      });
+    } catch (error) {
+      logOpenAI('moduleExtract:error', {
+        fileId,
+        fileName,
+        module: moduleName,
+        error:
+          error instanceof Error
+            ? { message: error.message, stack: error.stack }
+            : error,
+      });
+    }
+  }
+
+  return results;
+}
+
+async function classifyHighLevelDocument(
+  fileId: string,
+  fileName: string,
+): Promise<HighLevelClassificationResult | null> {
+  try {
+    logOpenAI('highLevelClassify:start', {
+      fileId,
+      fileName,
+    });
+
+    const template = await loadHighLevelClassificationTemplate();
+
+    const response = await openai.responses.create({
+      model: 'gpt-4.1-mini',
+      instructions: template,
+      input: [
+        {
+          role: 'user',
+          type: 'message',
+          content: [
+            {
+              type: 'input_text',
+              text:
+                'Classify this document at a high level according to the provided schema and respond only with JSON that matches the specified JSON output format.',
+            },
+            {
+              type: 'input_file',
+              file_id: fileId,
+            },
+          ],
+        },
+      ],
+      text: {
+        format: { type: 'json_object' },
+      },
+    });
+
+    const rawText =
+      ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
+      ((response as any).output_text as string | undefined);
+
+    if (!rawText) {
+      logOpenAI('highLevelClassify:error', {
+        fileId,
+        fileName,
+        error: { message: 'No text output from high-level classification model' },
+      });
+      return null;
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (err) {
+      logOpenAI('highLevelClassify:error', {
+        fileId,
+        fileName,
+        error: {
+          message: 'Failed to parse high-level classification JSON',
+          rawText: rawText.slice(0, 500),
+        },
+      });
+      return null;
+    }
+
+    const typeRaw = typeof parsed.type === 'string' ? parsed.type : '';
+    const allowedTypes: HighLevelType[] = [
+      'clinical_encounter',
+      'communication',
+      'result',
+      'referral',
+      'administrative',
+      'external_record',
+    ];
+
+    const type = allowedTypes.includes(typeRaw as HighLevelType)
+      ? (typeRaw as HighLevelType)
+      : null;
+
+    if (!type) {
+      logOpenAI('highLevelClassify:error', {
+        fileId,
+        fileName,
+        error: {
+          message: 'High-level classification returned invalid type',
+          rawType: typeRaw,
+        },
+      });
+      return null;
+    }
+
+    const confidenceRaw = parsed.confidence;
+    let confidence: number | null = null;
+    if (typeof confidenceRaw === 'number') {
+      confidence = confidenceRaw;
+    } else if (typeof confidenceRaw === 'string') {
+      const num = Number(confidenceRaw);
+      confidence = Number.isFinite(num) ? num : null;
+    }
+
+    logOpenAI('highLevelClassify:success', {
+      fileId,
+      fileName,
+      type,
+      confidence,
+    });
+
+    return { type, confidence };
+  } catch (error) {
+    logOpenAI('highLevelClassify:error', {
+      fileId,
+      fileName,
+      error:
+        error instanceof Error
+          ? { message: error.message, stack: error.stack }
+          : error,
+    });
+    return null;
+  }
+}
+
+async function selectModulesForFile(
+  fileId: string,
+  fileName: string,
+  highLevelType: HighLevelType | null,
+): Promise<ModuleSelectionResult | null> {
+  try {
+    logOpenAI('moduleSelection:start', {
+      fileId,
+      fileName,
+      highLevelType,
+    });
+
+    const template = await loadModuleSelectionTemplate();
+
+    const documentTypeHint =
+      highLevelType && typeof highLevelType === 'string'
+        ? highLevelType
+        : 'unknown';
+
+    const response = await openai.responses.create({
+      model: 'gpt-4.1-mini',
+      instructions: template,
+      input: [
+        {
+          role: 'user',
+          type: 'message',
+          content: [
+            {
+              type: 'input_text',
+              text:
+                `The high-level document.type from a previous step is "${documentTypeHint}". ` +
+                'Use it only as a hint; it may be incorrect. Based on this and the document text, select all applicable modules and respond ONLY with valid JSON matching the specified JSON output format.',
+            },
+            {
+              type: 'input_file',
+              file_id: fileId,
+            },
+          ],
+        },
+      ],
+      text: {
+        format: { type: 'json_object' },
+      },
+    });
+
+    const rawText =
+      ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
+      ((response as any).output_text as string | undefined);
+
+    if (!rawText) {
+      logOpenAI('moduleSelection:error', {
+        fileId,
+        fileName,
+        error: { message: 'No text output from module selection model' },
+      });
+      return null;
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (err) {
+      logOpenAI('moduleSelection:error', {
+        fileId,
+        fileName,
+        error: {
+          message: 'Failed to parse module selection JSON',
+          rawText: rawText.slice(0, 500),
+        },
+      });
+      return null;
+    }
+
+    const rawModules = Array.isArray(parsed.modules) ? parsed.modules : [];
+    const allowed: ModuleName[] = [
+      'provider',
+      'patient',
+      'reason_for_encounter',
+      'vitals',
+      'smoking',
+      'sexual_health',
+      'mental_health',
+      'referral',
+      'results',
+      'communication',
+    ];
+
+    const modules: ModuleName[] = rawModules
+      .map((m: any) => (typeof m === 'string' ? m.trim() : ''))
+      .filter((m: string) => allowed.includes(m as ModuleName)) as ModuleName[];
+
+    logOpenAI('moduleSelection:success', {
+      fileId,
+      fileName,
+      highLevelType,
+      modules,
+    });
+
+    return { modules };
+  } catch (error) {
+    logOpenAI('moduleSelection:error', {
       fileId,
       fileName,
       error:
@@ -363,6 +730,9 @@ router.post(
       }
 
       let metadata: DocumentMetadata | null = null;
+      let highLevelClassification: HighLevelClassificationResult | null = null;
+      let moduleSelection: ModuleSelectionResult | null = null;
+      let moduleOutputs: Record<string, any> = {};
 
       if (!asyncMode) {
         // 2) Extract structured metadata using the templates and file (synchronous path).
@@ -377,6 +747,24 @@ router.post(
             attributes.clinic_or_facility = metadata.clinic_or_facility;
           }
           attributes.has_metadata = true;
+
+          highLevelClassification = await classifyHighLevelDocument(
+            file.id,
+            originalname,
+          );
+          moduleSelection = await selectModulesForFile(
+            file.id,
+            originalname,
+            highLevelClassification ? highLevelClassification.type : null,
+          );
+
+          if (moduleSelection) {
+            moduleOutputs = await runSelectedModulesForFile(
+              file.id,
+              originalname,
+              moduleSelection,
+            );
+          }
         }
       }
 
@@ -394,6 +782,17 @@ router.post(
         const db = await getDb();
         const dateValue =
           metadata && metadata.date ? metadata.date.slice(0, 10) : null;
+
+        const metadataPayload: any = metadata ?? {};
+        if (highLevelClassification) {
+          metadataPayload.high_level_classification = highLevelClassification;
+        }
+        if (moduleSelection) {
+          metadataPayload.modules_selected = moduleSelection;
+        }
+        if (moduleOutputs && Object.keys(moduleOutputs).length > 0) {
+          metadataPayload.modules = moduleOutputs;
+        }
 
         await db.query(
           `
@@ -422,7 +821,7 @@ router.post(
             metadata ? metadata.clinic_or_facility : null,
             1,
             metadata ? 0 : 1,
-            JSON.stringify(metadata ?? {}),
+            JSON.stringify(metadataPayload),
           ],
         );
       } catch (err) {
@@ -456,6 +855,23 @@ router.post(
                   vectorStoreFileId: vectorStoreFile.id,
                 });
                 return;
+              }
+
+              const highLevelClassification =
+                await classifyHighLevelDocument(file.id, originalname);
+              const moduleSelection = await selectModulesForFile(
+                file.id,
+                originalname,
+                highLevelClassification ? highLevelClassification.type : null,
+              );
+
+              let moduleOutputs: Record<string, any> = {};
+              if (moduleSelection) {
+                moduleOutputs = await runSelectedModulesForFile(
+                  file.id,
+                  originalname,
+                  moduleSelection,
+                );
               }
 
               const updatedAttributes: {
@@ -508,6 +924,18 @@ router.post(
                   ? bgMetadata.date.slice(0, 10)
                   : null;
 
+                const metadataPayload: any = bgMetadata;
+                if (highLevelClassification) {
+                  metadataPayload.high_level_classification =
+                    highLevelClassification;
+                }
+                if (moduleSelection) {
+                  metadataPayload.modules_selected = moduleSelection;
+                }
+                if (moduleOutputs && Object.keys(moduleOutputs).length > 0) {
+                  metadataPayload.modules = moduleOutputs;
+                }
+
                 await db.query(
                   `
                   UPDATE documents
@@ -523,9 +951,13 @@ router.post(
                     dateValue,
                     bgMetadata.provider_name ?? null,
                     bgMetadata.clinic_or_facility ?? null,
-                    JSON.stringify(bgMetadata),
+                    JSON.stringify(metadataPayload),
                     vectorStoreFile.id,
                   ],
+                );
+                await updateDocumentProjectionsForVectorStoreFile(
+                  vectorStoreFile.id,
+                  bgMetadata,
                 );
               } catch (err) {
                 console.error(
@@ -621,8 +1053,8 @@ router.post(
               }
             }
 
-            try {
-              const db = await getDb();
+              try {
+                const db = await getDb();
               await db.query(
                 `
                 UPDATE documents
@@ -690,6 +1122,25 @@ router.post(
               return;
             }
 
+            const highLevelClassification = await classifyHighLevelDocument(
+              file.id,
+              originalname,
+            );
+            const moduleSelection = await selectModulesForFile(
+              file.id,
+              originalname,
+              highLevelClassification ? highLevelClassification.type : null,
+            );
+
+            let moduleOutputs: Record<string, any> = {};
+            if (moduleSelection) {
+              moduleOutputs = await runSelectedModulesForFile(
+                file.id,
+                originalname,
+                moduleSelection,
+              );
+            }
+
             logOpenAI('backgroundMetadata:after_classify:after_extract', {
               documentType: classifiedType,
               fileId: file.id,
@@ -746,6 +1197,18 @@ router.post(
                 ? autoMetadata.date.slice(0, 10)
                 : null;
 
+               const metadataPayload: any = autoMetadata;
+               if (highLevelClassification) {
+                 metadataPayload.high_level_classification =
+                   highLevelClassification;
+               }
+               if (moduleSelection) {
+                 metadataPayload.modules_selected = moduleSelection;
+               }
+               if (moduleOutputs && Object.keys(moduleOutputs).length > 0) {
+                 metadataPayload.modules = moduleOutputs;
+               }
+
               await db.query(
                 `
                 UPDATE documents
@@ -761,9 +1224,13 @@ router.post(
                   dateValue,
                   autoMetadata.provider_name ?? null,
                   autoMetadata.clinic_or_facility ?? null,
-                  JSON.stringify(autoMetadata),
+                  JSON.stringify(metadataPayload),
                   vectorStoreFile.id,
                 ],
+              );
+              await updateDocumentProjectionsForVectorStoreFile(
+                vectorStoreFile.id,
+                autoMetadata,
               );
             } catch (err) {
               console.error(
@@ -1352,6 +1819,25 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
       return;
     }
 
+    const highLevelClassification = await classifyHighLevelDocument(
+      fileIdRaw,
+      typeof fileNameRaw === 'string' ? fileNameRaw : 'document.pdf',
+    );
+    const moduleSelection = await selectModulesForFile(
+      fileIdRaw,
+      typeof fileNameRaw === 'string' ? fileNameRaw : 'document.pdf',
+      highLevelClassification ? highLevelClassification.type : null,
+    );
+
+    let moduleOutputs: Record<string, any> = {};
+    if (moduleSelection) {
+      moduleOutputs = await runSelectedModulesForFile(
+        fileIdRaw,
+        typeof fileNameRaw === 'string' ? fileNameRaw : 'document.pdf',
+        moduleSelection,
+      );
+    }
+
     // Update searchable attributes based on latest metadata.
     const updatedAttributes: { [key: string]: string | number | boolean } = {
       ...attributes,
@@ -1373,6 +1859,17 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
     try {
       const db = await getDb();
       const dateValue = metadata.date ? metadata.date.slice(0, 10) : null;
+
+      const metadataPayload: any = metadata;
+      if (highLevelClassification) {
+        metadataPayload.high_level_classification = highLevelClassification;
+      }
+      if (moduleSelection) {
+        metadataPayload.modules_selected = moduleSelection;
+      }
+      if (moduleOutputs && Object.keys(moduleOutputs).length > 0) {
+        metadataPayload.modules = moduleOutputs;
+      }
 
       await db.query(
         `
@@ -1411,9 +1908,10 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
           metadata.clinic_or_facility,
           1,
           0,
-          JSON.stringify(metadata),
+          JSON.stringify(metadataPayload),
         ],
       );
+      await updateDocumentProjectionsForVectorStoreFile(id, metadata);
     } catch (err) {
       console.error('Failed to upsert document metadata in DB:', err);
     }

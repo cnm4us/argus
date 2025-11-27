@@ -5,7 +5,7 @@ Your task is to extract ONLY vital signs and related clinical context from this 
 
 You MUST follow these rules:
 - Extract ONLY the fields belonging to the vitals module.
-- If a vital sign is not explicitly present in the text, return null.
+- If a vital sign is not explicitly present in the text, return JSON null.
 - DO NOT infer or guess missing values.
 - DO NOT extract any information related to other modules (provider, patient, smoking, sexual health, mental health, referrals, results, communication, etc.).
 - DO NOT extract unrelated narrative content.
@@ -67,7 +67,7 @@ Valid values:
 - "non_rebreather"
 - "other"
 - "not_documented"
-- null (if not present at all)
+- null (if no information about oxygen device appears anywhere in the document)
 
 ### height_inches
 Convert if needed:
@@ -104,8 +104,10 @@ If no such context, return an empty array [].
 
 ## Confidence Score
 - Must be a decimal 0.00–1.00
-- Represents certainty that extracted values match the document
-- Not clinical confidence — just extraction confidence
+- Represents certainty that extracted values match the document (not clinical confidence).
+- If all extracted vitals and contextual notes are explicitly documented with clear numbers/phrases, confidence should usually be 0.90 or higher.
+- If only a few items are present or the note is ambiguous, keep confidence between 0.40–0.89 depending on clarity.
+- If essentially no vitals are documented and most fields are null, confidence should be low (for example below 0.30).
 
 ## Output Format (STRICT JSON)
 {

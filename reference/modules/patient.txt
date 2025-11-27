@@ -6,7 +6,7 @@ Your task is to extract ONLY patient demographic information from this document.
 You MUST follow these rules:
 - Extract only fields belonging to the patient module.
 - Do NOT extract data related to provider, vitals, smoking, mental health, sexual health, referrals, or any other module.
-- If a field is not explicitly documented in the text, return null.
+- If a field is not explicitly documented in the text, return JSON null.
 - Do NOT infer, assume, or guess missing values.
 - Output strict JSON only in the exact format provided.
 - Do NOT include commentary or explanation.
@@ -46,8 +46,10 @@ If written differently:
 
 ### Confidence Score
 - Decimal between 0.00 and 1.00
-- Represents confidence that fields were extracted correctly
-- Not about clinical accuracy — only output extraction certainty
+- Represents confidence that fields were extracted correctly (not clinical accuracy).
+- If MRN, name, and/or DOB are clearly and explicitly documented, confidence should usually be 0.90 or higher.
+- If only partial or ambiguous information is present, keep confidence between 0.40–0.89 depending on clarity.
+- If no patient demographic information appears and all fields are null, confidence should be low (for example below 0.30).
 
 ## Special Cases (must follow these)
 - If multiple patient names appear (rare), choose the primary patient.

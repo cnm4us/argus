@@ -8,7 +8,7 @@ You MUST follow these rules:
 - Follow the provided schema EXACTly — no extra fields.
 - Do NOT infer, guess, or assume values.
 - Do NOT extract content from other modules (vitals, smoking, mental health, referrals, communication, etc.).
-- If a field is not explicitly present, return null, empty arrays, or false.
+- If a field is not explicitly present, return JSON null, empty arrays, or false as appropriate.
 - Output strict JSON only, using the exact schema provided.
 - NO commentary, explanations, or additional text.
 
@@ -159,7 +159,10 @@ Extract literal text if present, such as:
 
 ## Confidence Score
 - Must be between 0.00–1.00
-- Reflects certainty of extraction, NOT clinical confidence
+- Reflects certainty of extraction, NOT clinical confidence.
+- If the result type and key summary/impression fields are clearly and explicitly documented, confidence should usually be 0.90 or higher.
+- If results are partial, poorly labeled, or only weakly implied, keep confidence between 0.40–0.89 depending on clarity.
+- If no results content is present and most fields are null/empty, confidence should be low (for example below 0.30).
 
 ## STRICT OUTPUT FORMAT (no deviation)
 {

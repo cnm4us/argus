@@ -6,7 +6,7 @@ Your task is to extract ONLY provider information from this document.
 You MUST follow these rules:
 - Extract ONLY fields belonging to the provider module.
 - DO NOT extract data for patient, vitals, smoking, referrals, results, or any other modules.
-- If a field is not explicitly present in the document text, set it to null.
+- If a field is not explicitly present in the document text, set it to JSON null.
 - DO NOT infer or guess missing values.
 - DO NOT use outside knowledge.
 - Output strict JSON only, following the exact structure provided.
@@ -32,7 +32,10 @@ You MUST follow these rules:
 
 ## Confidence Score:
 - Provide a decimal between 0.00 and 1.00.
-- Confidence reflects how certain you are that the extracted values are correct given the document's content.
+- Confidence reflects how certain you are that the extracted values are correct given the document's content (not clinical judgment).
+- If the provider's name and role are clearly and explicitly documented, confidence should usually be 0.90 or higher.
+- If only partial name, initials, or ambiguous role is present, keep confidence between 0.40–0.89 depending on clarity.
+- If no provider is identified and all fields are null, confidence should be low (for example below 0.30).
 
 ## Important Rules:
 - If multiple providers appear, select the primary clinician author or signing provider.

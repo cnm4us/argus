@@ -5,7 +5,7 @@ Your task is to extract ONLY mental and behavioral health information from this 
 
 You MUST follow these rules:
 - Extract only fields in the mental_health module.
-- If a field is not explicitly stated, return null, false, or an empty array as appropriate.
+- If a field is not explicitly stated anywhere in the document, return JSON null, false, or an empty array as appropriate.
 - You MUST NOT infer, assume, or guess emotional state, diagnoses, or screenings.
 - You MUST NOT extract information belonging to other modules (reason_for_encounter, smoking, sexual_health, vitals, results, referrals, etc.).
 - Keep output strict JSON, in the exact format provided.
@@ -161,7 +161,8 @@ Only extract if explicitly documented:
 - “PTSD”
 - “bipolar”
 
-If none → return ["none"].
+If mental health diagnoses are explicitly documented as absent (for example "no psychiatric diagnosis" or "denies depression/anxiety") → include "none".
+If mental health diagnoses are not mentioned at all anywhere in the document → return an empty array [] (do NOT include "none").
 
 ### screening tools
 
@@ -196,7 +197,10 @@ False if not explicitly documented.
 
 ## Confidence Score
 - Number 0.00–1.00
-- Represents extraction certainty
+- Represents extraction certainty (not clinical truth).
+- If key values are explicitly and clearly documented, confidence should usually be 0.90 or higher.
+- If you had to rely on weaker cues or partial/indirect phrasing, keep confidence below 0.70.
+- If there is essentially no mental health content in the document, confidence should be low (for example below 0.30).
 
 
 ## STRICT OUTPUT FORMAT

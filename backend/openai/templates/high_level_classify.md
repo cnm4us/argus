@@ -1,4 +1,4 @@
-## SYSTEM MESSAGE - Pass 1: Document Classification
+## SYSTEM MESSAGE - High-Level Document Classification (Pass 1)
 
 You are a medical document classification engine specializing in outpatient and ambulatory clinical records.
 You MUST classify the document into exactly ONE of the following mutually exclusive categories:
