@@ -25,6 +25,41 @@ function toStringArray(value: unknown): string[] {
   return value.map((v) => String(v));
 }
 
+const NORMALIZED_REFERRAL_SPECIALTIES: string[] = [
+  'pulmonology',
+  'cardiology',
+  'endocrinology',
+  'gastroenterology',
+  'nephrology',
+  'rheumatology',
+  'hematology',
+  'oncology',
+  'infectious_disease',
+  'neurology',
+  'general_surgery',
+  'orthopedic_surgery',
+  'vascular_surgery',
+  'ent',
+  'ophthalmology',
+  'urology',
+  'gynecology',
+  'dermatology',
+  'podiatry',
+  'psychiatry',
+  'psychology',
+  'counseling',
+  'physical_therapy',
+  'occupational_therapy',
+  'speech_therapy',
+  'transplant_specialist',
+  'palliative_care',
+  'sleep_medicine',
+  'pain_management',
+  'allergy_immunology',
+  'wound_care',
+  'other_specialty',
+];
+
 async function upsertDocumentVitals(
   db: mysql.Pool,
   documentId: number,
@@ -640,112 +675,249 @@ async function upsertDocumentReferrals(
       ? (modules as any).referral
       : null;
 
-  let hasReferralRequest = 0;
-  let referralSpecialty: string | null = null;
-  let referralReasonText: string | null = null;
-  let referralPatientRequested = 0;
-  let referralProviderInitiated = 0;
-  let hasReferralDenial = 0;
-  let referralDenialType: string | null = null;
-  let referralDenialReasonText: string | null = null;
+  // Clear any existing rows for this document; we'll re-insert based on current metadata.
+  await db.query('DELETE FROM document_referrals WHERE document_id = ?', [documentId]);
 
+  const rowsToInsert: {
+    referralSpecialty: string | null;
+    referralReasonText: string | null;
+    referralPatientRequested: number;
+    referralProviderInitiated: number;
+    hasReferralDenial: number;
+    referralDenialType: string | null;
+    referralDenialReasonText: string | null;
+  }[] = [];
+
+  // 1) Structured referral from module (if present).
   if (referralModule && typeof (referralModule as any).referral === 'object') {
     const ref = (referralModule as any).referral;
     const req = ref.referral_request ?? {};
     const denial = ref.referral_denial ?? {};
 
-    if (typeof req.specialty === 'string' && req.specialty.length > 0) {
-      referralSpecialty = req.specialty;
-    }
-    if (typeof req.reason === 'string' && req.reason.length > 0) {
-      referralReasonText = req.reason;
-    }
-    if (req.patient_requested === true) {
-      referralPatientRequested = 1;
-    }
-    if (req.provider_initiated === true) {
-      referralProviderInitiated = 1;
-    }
+    const specialty =
+      typeof req.specialty === 'string' && req.specialty.length > 0 ? req.specialty : null;
+    const reason =
+      typeof req.reason === 'string' && req.reason.length > 0 ? req.reason : null;
 
-    if (
-      referralSpecialty ||
-      referralReasonText ||
-      referralPatientRequested ||
-      referralProviderInitiated
-    ) {
-      hasReferralRequest = 1;
-    }
+    const patientRequested = req.patient_requested === true ? 1 : 0;
+    const providerInitiated = req.provider_initiated === true ? 1 : 0;
 
-    if (typeof denial.denial_type === 'string' && denial.denial_type.length > 0) {
-      hasReferralDenial = 1;
-      referralDenialType = denial.denial_type;
-    }
-    if (typeof denial.denial_reason_text === 'string' && denial.denial_reason_text.length > 0) {
-      referralDenialReasonText = denial.denial_reason_text;
-    }
-  } else {
-    const referralsRaw = toStringArray((metadata as any).referrals);
-    const referralsLower = referralsRaw.map((r) => r.toLowerCase());
+    const hasDenial =
+      typeof denial.denial_type === 'string' && denial.denial_type.length > 0 ? 1 : 0;
+    const denialType =
+      typeof denial.denial_type === 'string' && denial.denial_type.length > 0
+        ? (denial.denial_type as string)
+        : null;
+    const denialReason =
+      typeof denial.denial_reason_text === 'string' && denial.denial_reason_text.length > 0
+        ? (denial.denial_reason_text as string)
+        : null;
 
-    hasReferralRequest = referralsRaw.length > 0 ? 1 : 0;
-    referralReasonText = referralsRaw.length > 0 ? referralsRaw.join('; ') : null;
-
-    if (referralsLower.some((r) => r.includes('pulmonology') || r.includes('pulmonary'))) {
-      referralSpecialty = 'pulmonology';
+    if (specialty || reason || patientRequested || providerInitiated || hasDenial) {
+      rowsToInsert.push({
+        referralSpecialty: specialty,
+        referralReasonText: reason,
+        referralPatientRequested: patientRequested,
+        referralProviderInitiated: providerInitiated,
+        hasReferralDenial: hasDenial,
+        referralDenialType: denialType,
+        referralDenialReasonText: denialReason,
+      });
     }
   }
 
-  const conditionsDiscussed = toLowerStringArray((metadata as any).conditions_discussed);
-  const allReasonText = `${referralReasonText ?? ''} ${conditionsDiscussed.join(' ')}`.toLowerCase();
+  // 2) Additional referrals from universal metadata.referrals[] (unstructured).
+  const referralsRaw = toStringArray((metadata as any).referrals);
+  for (const text of referralsRaw) {
+    const trimmed = text.trim();
+    if (!trimmed) continue;
+    const lower = trimmed.toLowerCase();
 
-  const reasonMentionsCopd =
-    allReasonText.includes('copd') ||
-    allReasonText.includes('chronic obstructive pulmonary');
-  const reasonMentionsEmphysemaOrObstructive =
-    allReasonText.includes('emphysema') || allReasonText.includes('obstructive lung');
+    const matchedSpecialty =
+      NORMALIZED_REFERRAL_SPECIALTIES.find((s) => s === lower) ?? null;
+
+    if (matchedSpecialty) {
+      // If this specialty is already represented, skip adding a duplicate row.
+      const alreadyBySpecialty = rowsToInsert.some(
+        (r) => (r.referralSpecialty ?? '').toLowerCase() === matchedSpecialty,
+      );
+      if (alreadyBySpecialty) {
+        continue;
+      }
+
+      rowsToInsert.push({
+        referralSpecialty: matchedSpecialty,
+        referralReasonText: null,
+        referralPatientRequested: 0,
+        referralProviderInitiated: 0,
+        hasReferralDenial: 0,
+        referralDenialType: null,
+        referralDenialReasonText: null,
+      });
+      continue;
+    }
+
+    // Avoid duplicating a row where this text is already used as a reason.
+    const alreadyByReason = rowsToInsert.some(
+      (r) => (r.referralReasonText ?? '').toLowerCase() === lower,
+    );
+    if (alreadyByReason) continue;
+
+    rowsToInsert.push({
+      referralSpecialty: null,
+      referralReasonText: trimmed,
+      referralPatientRequested: 0,
+      referralProviderInitiated: 0,
+      hasReferralDenial: 0,
+      referralDenialType: null,
+      referralDenialReasonText: null,
+    });
+  }
+
+  if (rowsToInsert.length === 0) {
+    return;
+  }
+
+  const conditionsDiscussed = toLowerStringArray((metadata as any).conditions_discussed);
+
+  for (const row of rowsToInsert) {
+    const allReasonText = `${row.referralReasonText ?? ''} ${conditionsDiscussed.join(' ')}`.toLowerCase();
+
+    const reasonMentionsCopd =
+      allReasonText.includes('copd') ||
+      allReasonText.includes('chronic obstructive pulmonary');
+    const reasonMentionsEmphysemaOrObstructive =
+      allReasonText.includes('emphysema') || allReasonText.includes('obstructive lung');
+
+    await db.query(
+      `
+        INSERT INTO document_referrals (
+          document_id,
+          encounter_date,
+          has_referral_request,
+          referral_specialty,
+          referral_reason_text,
+          referral_patient_requested,
+          referral_provider_initiated,
+          has_referral_denial,
+          referral_denial_type,
+          referral_denial_reason_text,
+          reason_mentions_copd,
+          reason_mentions_emphysema_or_obstructive_lung
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        documentId,
+        encounterDateValue,
+        1,
+        row.referralSpecialty,
+        row.referralReasonText,
+        row.referralPatientRequested,
+        row.referralProviderInitiated,
+        row.hasReferralDenial,
+        row.referralDenialType,
+        row.referralDenialReasonText,
+        reasonMentionsCopd ? 1 : 0,
+        reasonMentionsEmphysemaOrObstructive ? 1 : 0,
+      ],
+    );
+  }
+}
+
+async function upsertDocumentResults(
+  db: mysql.Pool,
+  documentId: number,
+  encounterDate: Date | string | null,
+  metadata: any,
+): Promise<void> {
+  const encounterDateValue = normalizeDate(encounterDate);
+
+  const modules = metadata && typeof metadata === 'object' ? (metadata as any).modules : null;
+  const resultsModule =
+    modules && typeof (modules as any).results === 'object' ? (modules as any).results : null;
+
+  // Clear existing rows for this document; insert fresh if module is present.
+  await db.query('DELETE FROM document_results WHERE document_id = ?', [documentId]);
+
+  if (!resultsModule || typeof (resultsModule as any).results !== 'object') {
+    return;
+  }
+
+  const results = (resultsModule as any).results;
+  const typeRaw = typeof results.type === 'string' ? results.type : null;
+  const resultType =
+    typeRaw === 'lab' || typeRaw === 'imaging' ? (typeRaw as 'lab' | 'imaging') : null;
+
+  const lab = results.lab ?? {};
+  const imaging = results.imaging ?? {};
+
+  const labCategory =
+    typeof lab.category === 'string' && lab.category.length > 0 ? (lab.category as string) : null;
+  const labSubType =
+    typeof lab.subtype === 'string' && lab.subtype.length > 0 ? (lab.subtype as string) : null;
+
+  let labAbnormalFlags: string | null = null;
+  if (Array.isArray(lab.abnormal_flags) && lab.abnormal_flags.length > 0) {
+    labAbnormalFlags = lab.abnormal_flags.map((f: any) => String(f)).join(', ');
+  }
+
+  const labSummaryText =
+    typeof lab.result_summary_text === 'string' && lab.result_summary_text.length > 0
+      ? (lab.result_summary_text as string)
+      : null;
+
+  const imagingCategory =
+    typeof imaging.category === 'string' && imaging.category.length > 0
+      ? (imaging.category as string)
+      : null;
+  const imagingSubType =
+    typeof imaging.subtype === 'string' && imaging.subtype.length > 0
+      ? (imaging.subtype as string)
+      : null;
+  const impressionText =
+    typeof imaging.impression_text === 'string' && imaging.impression_text.length > 0
+      ? (imaging.impression_text as string)
+      : null;
+  const findingsText =
+    typeof imaging.findings_text === 'string' && imaging.findings_text.length > 0
+      ? (imaging.findings_text as string)
+      : null;
+
+  const reasonForTest =
+    typeof results.reason_for_test === 'string' && results.reason_for_test.length > 0
+      ? (results.reason_for_test as string)
+      : null;
 
   await db.query(
     `
-      INSERT INTO document_referrals (
+      INSERT INTO document_results (
         document_id,
         encounter_date,
-        has_referral_request,
-        referral_specialty,
-        referral_reason_text,
-        referral_patient_requested,
-        referral_provider_initiated,
-        has_referral_denial,
-        referral_denial_type,
-        referral_denial_reason_text,
-        reason_mentions_copd,
-        reason_mentions_emphysema_or_obstructive_lung
+        result_type,
+        lab_category,
+        lab_subtype,
+        lab_abnormal_flags,
+        lab_summary_text,
+        imaging_category,
+        imaging_subtype,
+        impression_text,
+        findings_text,
+        reason_for_test
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON DUPLICATE KEY UPDATE
-        encounter_date = VALUES(encounter_date),
-        has_referral_request = VALUES(has_referral_request),
-        referral_specialty = VALUES(referral_specialty),
-        referral_reason_text = VALUES(referral_reason_text),
-        referral_patient_requested = VALUES(referral_patient_requested),
-        referral_provider_initiated = VALUES(referral_provider_initiated),
-        has_referral_denial = VALUES(has_referral_denial),
-        referral_denial_type = VALUES(referral_denial_type),
-        referral_denial_reason_text = VALUES(referral_denial_reason_text),
-        reason_mentions_copd = VALUES(reason_mentions_copd),
-        reason_mentions_emphysema_or_obstructive_lung = VALUES(reason_mentions_emphysema_or_obstructive_lung)
     `,
     [
       documentId,
       encounterDateValue,
-      hasReferralRequest ? 1 : 0,
-      referralSpecialty,
-      referralReasonText,
-      referralPatientRequested,
-      referralProviderInitiated,
-      hasReferralDenial,
-      referralDenialType,
-      referralDenialReasonText,
-      reasonMentionsCopd ? 1 : 0,
-      reasonMentionsEmphysemaOrObstructive ? 1 : 0,
+      resultType,
+      labCategory,
+      labSubType,
+      labAbnormalFlags,
+      labSummaryText,
+      imagingCategory,
+      imagingSubType,
+      impressionText,
+      findingsText,
+      reasonForTest,
     ],
   );
 }
@@ -787,5 +959,5 @@ export async function updateDocumentProjectionsForVectorStoreFile(
   await upsertDocumentSmoking(db, documentId, encounterDate, metadata);
   await upsertDocumentMentalHealth(db, documentId, encounterDate, metadata);
   await upsertDocumentReferrals(db, documentId, encounterDate, metadata);
+   await upsertDocumentResults(db, documentId, encounterDate, metadata);
 }
-

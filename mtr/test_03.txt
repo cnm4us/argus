@@ -1,0 +1,87 @@
+TEST 03
+- Single office_visit PDF uploaded via app/backend
+- Async metadata + modules + projections
+
+S3 OBJECTS
+--------------------
+{
+    "Contents": [
+        {
+            "Key": "documents/file-FTsXxxdvj1sBMNvcy8ECT3.pdf",
+            "LastModified": "2025-11-27T19:13:04+00:00",
+            "ETag": "\"4cd6a0ddb719a5e4c4f4f31ecd3f95f2\"",
+            "ChecksumAlgorithm": [
+                "CRC32"
+            ],
+            "ChecksumType": "FULL_OBJECT",
+            "Size": 423432,
+            "StorageClass": "STANDARD"
+        }
+    ],
+    "RequestCharged": null,
+    "Prefix": "documents/"
+}
+
+OPENAI DOCUMENTS
+--------------------
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "file-FTsXxxdvj1sBMNvcy8ECT3",
+      "object": "vector_store.file",
+      "usage_bytes": 35104,
+      "created_at": 1764270784,
+      "vector_store_id": "vs_69235dd0a1ec81919040b0bb20c566a9",
+      "status": "completed",
+      "last_error": null,
+      "chunking_strategy": {
+        "type": "static",
+        "static": {
+          "max_chunk_size_tokens": 800,
+          "chunk_overlap_tokens": 400
+        }
+      },
+      "attributes": {
+        "file_id": "file-FTsXxxdvj1sBMNvcy8ECT3",
+        "provider_name": "Suzette Watson",
+        "date": "2025-09-09",
+        "clinic_or_facility": "Family Health Services",
+        "s3_key": "documents/file-FTsXxxdvj1sBMNvcy8ECT3.pdf",
+        "file_name": "COS-00001-002-6-17.pdf",
+        "has_metadata": true,
+        "is_active": true,
+        "document_type": "office_visit"
+      }
+    }
+  ],
+  "first_id": "file-FTsXxxdvj1sBMNvcy8ECT3",
+  "last_id": "file-FTsXxxdvj1sBMNvcy8ECT3",
+  "has_more": false
+}
+
+TABLE: documents
+--------------------
+id	vector_store_file_id	openai_file_id	s3_key	filename	document_type	date	provider_name	clinic_or_facility	is_active	needs_metadata	metadata_json	created_at	updated_at
+1	file-FTsXxxdvj1sBMNvcy8ECT3	file-FTsXxxdvj1sBMNvcy8ECT3	documents/file-FTsXxxdvj1sBMNvcy8ECT3.pdf	COS-00001-002-6-17.pdf	office_visit	2025-09-09	Suzette Watson	Family Health Services	1	0	{"document_id":"","document_type":"office_visit","file_id":"file-FTsXxxdvj1sBMNvcy8ECT3","file_name":"COS-00001-002-6-17.pdf","page_range":"1-7","date":"2025-09-09","provider_name":"Suzette Watson","provider_role":"NP","clinic_or_facility":"Family Health Services","patient_name":"Eliesa Brown","patient_mrn":"7458","patient_dob":"1964-07-20","summary":"Eliesa Brown, a 61-year-old female, presented for an annual gynecological exam and PAP smear as part of routine health maintenance, which is particularly important given her lung transplant candidacy due to emphysema. Physical examination was notable for a normal pelvic exam but the presence of white vaginal discharge; otherwise, the review of systems and physical exam were unremarkable. The visit included collection of a PAP smear and reiteration of cervical cancer screening guidelines. No new medications were started or changed, and the patient was advised to await test results and to follow up per the transplant team's indications.","encounter_type":"primary_care","encounter_mode":"in_person","chief_complaint":"PAP Smear","subjective_text":"Eliesa Brown is a 61-year-old female here for a PAP smear as part of her annual exam. She is on the lung transplant list for emphysema. She denies new sexual partners, history of STDs, and exposure to blood or bodily fluids. Last PAP was 06/03/2024 with no abnormal history; last mammogram 04/27/2023 was negative. No sexual intercourse since last screening.","objective_text":"Vitals: BP 134/77 (left arm, sitting), Pulse 104 (abnormal), Temp 97.6°F, Resp 16, Weight 173 lb (78.5 kg), SpO2 99%, BMI 27.10. Exam was conducted with a chaperone. Head, cardiovascular, pulmonary, abdomen, GU (external genitalia, labia minora/majora, urethra, vagina, cervix, uterus, adnexa, rectum) all normal except white vaginal discharge present. No lymphadenopathy. Neuro/psych exam normal.","assessment_text":"Annual gynecological exam with white vaginal discharge. Routine health maintenance. Pap collected. No visible abnormality of the cervix; findings otherwise unremarkable.","plan_text":"Routine health maintenance with Pap smear performed. Will notify patient of results. If infection is detected, treatment will be sent. Follow up as needed as directed by the transplant team.","instructions":"Await Pap smear results. Will be contacted via MyChart with results. If infection requires treatment, prescriptions will be sent. Continue to follow up as advised by the transplant team.","referrals":[],"follow_up_recommended":"yes","follow_up_timeframe":"as indicated by transplant team","diagnoses":[{"code":"Z01.419","description":"Encounter for gynecological examination","primary":true},{"code":"Z12.4","description":"Pap smear for cervical cancer screening","primary":false},{"code":"Z71.89","description":"Counseling on health promotion and disease prevention","primary":false}],"conditions_discussed":["white vaginal discharge","lung transplant candidacy","emphysema"],"vitals":{"spo2":99,"blood_pressure":"134/77 sitting left arm","heart_rate":104,"resp_rate":16,"temperature":97.6,"weight":173,"bmi":27.1},"medications_listed":[...trimmed...],"high_level_classification":{"type":"clinical_encounter","confidence":0.98},"modules_selected":{"modules":["provider","patient","reason_for_encounter","vitals","sexual_health","mental_health","referral","results","communication"]},"modules":{"provider":{...},"patient":{...},"reason_for_encounter":{...},"vitals":{...},"sexual_health":{...},"mental_health":{...},"referral":{...},"results":{...}}}	2025-11-27 19:13:04	2025-11-27 19:15:46
+
+TABLE: document_vitals
+--------------------
+document_id	encounter_date	has_vitals	spo2	spo2_is_low	blood_pressure_systolic	blood_pressure_diastolic	heart_rate	respiratory_rate	temperature_f	oxygen_device	height_inches	weight_pounds	bmi	created_at	updated_at
+1	2025-09-09	1	99	0	134	77	104	16	97.6	not_documented	NULL	173	27.1	2025-11-27 19:15:46	2025-11-27 19:15:46
+
+TABLE: document_smoking
+--------------------
+document_id	encounter_date	patient_status	patient_years_smoked	patient_pack_years	provider_status	provider_years_smoked	provider_pack_years	has_smoking_history_documented	has_cessation_counseling	advised_to_quit	pharm_nicotine_replacement	pharm_varenicline_chantix	pharm_bupropion	behavioral_therapy_offered	quitline_offered	support_group_offered	referral_smoking_program	referral_behavioral_health	follow_up_plans_documented	counseling_time_minutes	created_at	updated_at
+1	2025-09-09	NULL	NULL	NULL	NULL	NULL	NULL	0	0	0	0	0	0	0	0	0	0	0	0	NULL	2025-11-27 19:15:46	2025-11-27 19:15:46
+
+TABLE: document_referrals
+--------------------
+document_id	encounter_date	has_referral_request	referral_specialty	referral_reason_text	referral_patient_requested	referral_provider_initiated	has_referral_denial	referral_denial_type	referral_denial_reason_text	reason_mentions_copd	reason_mentions_emphysema_or_obstructive_lung	created_at	updated_at
+1	2025-09-09	1	endocrinology	goiter, nontoxic, multinodular	0	1	0	NULL	NULL	0	1	2025-11-27 19:15:46	2025-11-27 19:15:46
+
+TABLE: document_mental_health
+--------------------
+document_id	encounter_date	has_mental_health_content	affect_anxious	affect_depressed	affect_tearful	affect_labile	affect_flat_or_blunted	behavior_emotionally_distressed	behavior_non_compliant	behavior_guarded_or_hostile	pressured_speech	symptom_anxiety	symptom_depression	symptom_stress	symptom_panic	symptom_insomnia	dx_any_mental_health	dx_anxiety_disorder	dx_depressive_disorder	dx_adjustment_disorder	dx_ptsd	dx_bipolar_disorder	dx_substance_use_disorder	created_at	updated_at
+1	2025-09-09	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	2025-11-27 19:15:46	2025-11-27 19:15:46
+

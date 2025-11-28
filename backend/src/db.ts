@@ -177,22 +177,62 @@ export async function initDb(): Promise<void> {
 
   const createDocumentReferralsTableSQL = `
     CREATE TABLE IF NOT EXISTS document_referrals (
-      document_id                               INT UNSIGNED NOT NULL PRIMARY KEY,
-      encounter_date                            DATE         NULL,
-      has_referral_request                      TINYINT(1)   NOT NULL DEFAULT 0,
-      referral_specialty                        VARCHAR(64)  NULL,
-      referral_reason_text                      TEXT         NULL,
-      referral_patient_requested                TINYINT(1)   NOT NULL DEFAULT 0,
-      referral_provider_initiated               TINYINT(1)   NOT NULL DEFAULT 0,
-      has_referral_denial                       TINYINT(1)   NOT NULL DEFAULT 0,
-      referral_denial_type                      ENUM('insurance_denial','clinical_denial','administrative_denial','other_denial') NULL,
-      referral_denial_reason_text               TEXT         NULL,
-      reason_mentions_copd                      TINYINT(1)   NOT NULL DEFAULT 0,
+      id                                         INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      document_id                                INT UNSIGNED NOT NULL,
+      encounter_date                             DATE         NULL,
+      has_referral_request                       TINYINT(1)   NOT NULL DEFAULT 0,
+      referral_specialty                         VARCHAR(64)  NULL,
+      referral_reason_text                       TEXT         NULL,
+      referral_patient_requested                 TINYINT(1)   NOT NULL DEFAULT 0,
+      referral_provider_initiated                TINYINT(1)   NOT NULL DEFAULT 0,
+      has_referral_denial                        TINYINT(1)   NOT NULL DEFAULT 0,
+      referral_denial_type                       ENUM('insurance_denial','clinical_denial','administrative_denial','other_denial') NULL,
+      referral_denial_reason_text                TEXT         NULL,
+      reason_mentions_copd                       TINYINT(1)   NOT NULL DEFAULT 0,
       reason_mentions_emphysema_or_obstructive_lung TINYINT(1) NOT NULL DEFAULT 0,
-      created_at                                DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at                                DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      created_at                                 DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at                                 DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_ref_document_id (document_id, encounter_date),
       KEY idx_ref_specialty (referral_specialty, encounter_date),
       KEY idx_ref_copd (reason_mentions_copd, encounter_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
+  const createDocumentResultsTableSQL = `
+    CREATE TABLE IF NOT EXISTS document_results (
+      id                   INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      document_id          INT UNSIGNED NOT NULL,
+      encounter_date       DATE         NULL,
+      result_type          ENUM('lab','imaging') NULL,
+      lab_category         VARCHAR(64)  NULL,
+      lab_subtype          VARCHAR(128) NULL,
+      lab_abnormal_flags   TEXT         NULL,
+      lab_summary_text     TEXT         NULL,
+      imaging_category     VARCHAR(64)  NULL,
+      imaging_subtype      VARCHAR(128) NULL,
+      impression_text      TEXT         NULL,
+      findings_text        TEXT         NULL,
+      reason_for_test      TEXT         NULL,
+      created_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_results_doc (document_id, encounter_date),
+      KEY idx_results_type (result_type, lab_category, imaging_category)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
+  const createDocumentAppointmentsTableSQL = `
+    CREATE TABLE IF NOT EXISTS document_appointments (
+      id                   INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      document_id          INT UNSIGNED NOT NULL,
+      appointment_date     DATETIME     NULL,
+      status               ENUM('scheduled','completed','no_show','canceled','rescheduled','unknown') NULL,
+      source               VARCHAR(64)  NULL,
+      related_specialty    VARCHAR(64)  NULL,
+      reason_text          TEXT         NULL,
+      created_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_appt_doc (document_id, appointment_date),
+      KEY idx_appt_status (status, appointment_date)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `;
 
@@ -200,4 +240,30 @@ export async function initDb(): Promise<void> {
   await db.query(createDocumentSmokingTableSQL);
   await db.query(createDocumentMentalHealthTableSQL);
   await db.query(createDocumentReferralsTableSQL);
+  await db.query(createDocumentResultsTableSQL);
+  await db.query(createDocumentAppointmentsTableSQL);
+
+  // Backfill / migrate older single-row document_referrals schema (if present).
+  const [refCols] = (await db.query(
+    "SHOW COLUMNS FROM document_referrals LIKE 'id'",
+  )) as any[];
+  if (!Array.isArray(refCols) || refCols.length === 0) {
+    // Old schema: document_id was PRIMARY KEY. Migrate to multi-row schema.
+    try {
+      await db.query('ALTER TABLE document_referrals DROP PRIMARY KEY');
+      await db.query(
+        'ALTER TABLE document_referrals MODIFY document_id INT UNSIGNED NOT NULL',
+      );
+      await db.query(
+        'ALTER TABLE document_referrals ADD COLUMN id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY FIRST',
+      );
+      await db.query(
+        'ALTER TABLE document_referrals ADD KEY idx_ref_document_id (document_id, encounter_date)',
+      );
+    } catch (err) {
+      // Log and continue; in dev this is acceptable.
+      // eslint-disable-next-line no-console
+      console.warn('Warning: failed to migrate document_referrals schema', err);
+    }
+  }
 }
