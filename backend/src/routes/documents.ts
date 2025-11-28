@@ -177,6 +177,44 @@ interface ModuleSelectionResult {
   modules: ModuleName[];
 }
 
+let activeMetadataJobs = 0;
+const metadataJobQueue: Array<() => void> = [];
+
+async function runWithMetadataConcurrency<T>(fn: () => Promise<T>): Promise<T> {
+  const limit =
+    config.metadataMaxConcurrency && config.metadataMaxConcurrency > 0
+      ? config.metadataMaxConcurrency
+      : 1;
+
+  if (limit <= 1) {
+    return fn();
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const run = async () => {
+      activeMetadataJobs += 1;
+      try {
+        const result = await fn();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      } finally {
+        activeMetadataJobs -= 1;
+        const next = metadataJobQueue.shift();
+        if (next) {
+          next();
+        }
+      }
+    };
+
+    if (activeMetadataJobs < limit) {
+      void run();
+    } else {
+      metadataJobQueue.push(run);
+    }
+  });
+}
+
 async function classifyDocument(
   fileId: string,
   fileName: string,
@@ -832,6 +870,7 @@ router.post(
       if (asyncMode) {
         (async () => {
           try {
+            await runWithMetadataConcurrency(async () => {
             // If a specific document type was provided, skip classification and
             // run background metadata extraction as before.
             if (effectiveDocumentType !== 'unclassified') {
@@ -1250,6 +1289,7 @@ router.post(
               documentType: classifiedType,
               fileId: file.id,
               vectorStoreFileId: vectorStoreFile.id,
+            });
             });
           } catch (err) {
             console.error('Background classification/metadata failed:', err);
@@ -1808,10 +1848,12 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
       return;
     }
 
-    const metadata = await extractMetadata(
-      documentTypeRaw,
-      fileIdRaw,
-      typeof fileNameRaw === 'string' ? fileNameRaw : 'document.pdf',
+    const metadata = await runWithMetadataConcurrency(async () =>
+      extractMetadata(
+        documentTypeRaw,
+        fileIdRaw,
+        typeof fileNameRaw === 'string' ? fileNameRaw : 'document.pdf',
+      ),
     );
 
     if (!metadata) {

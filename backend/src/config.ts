@@ -12,6 +12,7 @@ export interface AppConfig {
   metadataRetryBaseDelaySeconds: number;
   classifyConfidenceThreshold: number;
   autoMetadataAfterClassify: boolean;
+  metadataMaxConcurrency: number;
   awsRegion: string;
   s3Bucket: string | null;
   s3Prefix: string;
@@ -44,6 +45,12 @@ const autoMetadataAfterClassifyEnv =
 const autoMetadataAfterClassify =
   autoMetadataAfterClassifyEnv === '1' ||
   autoMetadataAfterClassifyEnv.toLowerCase() === 'true';
+const metadataMaxConcurrencyRaw =
+  process.env.METADATA_MAX_CONCURRENCY || '2';
+let metadataMaxConcurrency = Number(metadataMaxConcurrencyRaw);
+if (!Number.isFinite(metadataMaxConcurrency) || metadataMaxConcurrency < 1) {
+  metadataMaxConcurrency = 1;
+}
 const awsRegion = process.env.AWS_REGION || 'us-west-1';
 const s3Bucket = process.env.ARGUS_S3_BUCKET || null;
 const s3Prefix = process.env.ARGUS_S3_PREFIX || '';
@@ -79,6 +86,7 @@ export const config: AppConfig = {
   metadataRetryBaseDelaySeconds,
   classifyConfidenceThreshold,
   autoMetadataAfterClassify,
+  metadataMaxConcurrency,
   awsRegion,
   s3Bucket,
   s3Prefix,
