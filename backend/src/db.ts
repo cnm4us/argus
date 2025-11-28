@@ -236,12 +236,67 @@ export async function initDb(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `;
 
+  const createDocumentCommunicationsTableSQL = `
+    CREATE TABLE IF NOT EXISTS document_communications (
+      document_id          INT UNSIGNED NOT NULL PRIMARY KEY,
+      encounter_date       DATE         NULL,
+      initiated_by         ENUM('patient','provider','clinic','pharmacy','insurance','attorney','other','unknown','not_documented') NULL,
+      message_direction    ENUM('inbound','outbound','bidirectional','unknown','not_documented') NULL,
+      reason_text          TEXT         NULL,
+      advice_given_text    TEXT         NULL,
+      patient_response_text TEXT        NULL,
+      created_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_comm_initiated (initiated_by, encounter_date),
+      KEY idx_comm_direction (message_direction, encounter_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
   await db.query(createDocumentVitalsTableSQL);
   await db.query(createDocumentSmokingTableSQL);
   await db.query(createDocumentMentalHealthTableSQL);
   await db.query(createDocumentReferralsTableSQL);
   await db.query(createDocumentResultsTableSQL);
   await db.query(createDocumentAppointmentsTableSQL);
+  await db.query(createDocumentCommunicationsTableSQL);
+
+  // Ensure document_communications enum columns include all expected values.
+  try {
+    await db.query(
+      `
+        ALTER TABLE document_communications
+        MODIFY initiated_by ENUM(
+          'patient',
+          'provider',
+          'clinic',
+          'pharmacy',
+          'insurance',
+          'attorney',
+          'other',
+          'unknown',
+          'not_documented'
+        ) NULL
+      `,
+    );
+    await db.query(
+      `
+        ALTER TABLE document_communications
+        MODIFY message_direction ENUM(
+          'inbound',
+          'outbound',
+          'bidirectional',
+          'unknown',
+          'not_documented'
+        ) NULL
+      `,
+    );
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      'Warning: failed to normalize document_communications enum columns',
+      err,
+    );
+  }
 
   // Backfill / migrate older single-row document_referrals schema (if present).
   const [refCols] = (await db.query(

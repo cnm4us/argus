@@ -127,6 +127,15 @@ async function extractMetadata(
             : error,
       });
 
+      if (status === 429) {
+        console.error(
+          '[OpenAI rate limit] extractMetadata received 429 for',
+          fileName,
+          'documentType=',
+          documentType,
+        );
+      }
+
       // Simple retry for OpenAI rate limits (429).
       if (status === 429 && attempt < maxAttempts) {
         const delay = baseDelayMs * attempt;
@@ -317,6 +326,7 @@ async function classifyDocument(
     };
   } catch (error) {
     logOpenAI('classify:error', {
+      status: (error as any)?.status,
       fileId,
       fileName,
       error:
@@ -324,6 +334,14 @@ async function classifyDocument(
           ? { message: error.message, stack: error.stack }
           : error,
     });
+
+    const status = (error as any)?.status;
+    if (status === 429) {
+      console.error(
+        '[OpenAI rate limit] classifyDocument received 429 for',
+        fileName,
+      );
+    }
     return null;
   }
 }
@@ -412,6 +430,7 @@ async function runSelectedModulesForFile(
       });
     } catch (error) {
       logOpenAI('moduleExtract:error', {
+        status: (error as any)?.status,
         fileId,
         fileName,
         module: moduleName,
@@ -420,6 +439,15 @@ async function runSelectedModulesForFile(
             ? { message: error.message, stack: error.stack }
             : error,
       });
+      const status = (error as any)?.status;
+      if (status === 429) {
+        console.error(
+          '[OpenAI rate limit] moduleExtract received 429 for',
+          fileName,
+          'module=',
+          moduleName,
+        );
+      }
     }
   }
 
@@ -536,6 +564,7 @@ async function classifyHighLevelDocument(
     return { type, confidence };
   } catch (error) {
     logOpenAI('highLevelClassify:error', {
+      status: (error as any)?.status,
       fileId,
       fileName,
       error:
@@ -543,6 +572,13 @@ async function classifyHighLevelDocument(
           ? { message: error.message, stack: error.stack }
           : error,
     });
+    const status = (error as any)?.status;
+    if (status === 429) {
+      console.error(
+        '[OpenAI rate limit] highLevelClassify received 429 for',
+        fileName,
+      );
+    }
     return null;
   }
 }
@@ -648,6 +684,7 @@ async function selectModulesForFile(
     return { modules };
   } catch (error) {
     logOpenAI('moduleSelection:error', {
+      status: (error as any)?.status,
       fileId,
       fileName,
       error:
@@ -655,6 +692,13 @@ async function selectModulesForFile(
           ? { message: error.message, stack: error.stack }
           : error,
     });
+    const status = (error as any)?.status;
+    if (status === 429) {
+      console.error(
+        '[OpenAI rate limit] moduleSelection received 429 for',
+        fileName,
+      );
+    }
     return null;
   }
 }

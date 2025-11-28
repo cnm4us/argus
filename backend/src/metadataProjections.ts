@@ -60,6 +60,26 @@ const NORMALIZED_REFERRAL_SPECIALTIES: string[] = [
   'other_specialty',
 ];
 
+const COMM_INITIATED_VALUES: string[] = [
+  'patient',
+  'provider',
+  'clinic',
+  'pharmacy',
+  'insurance',
+  'attorney',
+  'other',
+  'unknown',
+  'not_documented',
+];
+
+const COMM_DIRECTION_VALUES: string[] = [
+  'inbound',
+  'outbound',
+  'bidirectional',
+  'unknown',
+  'not_documented',
+];
+
 async function upsertDocumentVitals(
   db: mysql.Pool,
   documentId: number,
@@ -922,6 +942,126 @@ async function upsertDocumentResults(
   );
 }
 
+async function upsertDocumentCommunications(
+  db: mysql.Pool,
+  documentId: number,
+  encounterDate: Date | string | null,
+  metadata: any,
+): Promise<void> {
+  const encounterDateValue = normalizeDate(encounterDate);
+
+  const modules = metadata && typeof metadata === 'object' ? (metadata as any).modules : null;
+  const commModule =
+    modules && typeof (modules as any).communication === 'object'
+      ? (modules as any).communication
+      : null;
+
+  let initiatedBy: string | null = null;
+  let messageDirection: string | null = null;
+  let reasonText: string | null = null;
+  let adviceGivenText: string | null = null;
+  let patientResponseText: string | null = null;
+
+  if (commModule && typeof (commModule as any).communication === 'object') {
+    const comm = (commModule as any).communication;
+
+    if (typeof comm.initiated_by === 'string' && comm.initiated_by.length > 0) {
+      initiatedBy = comm.initiated_by;
+    }
+    if (
+      typeof comm.message_direction === 'string' &&
+      comm.message_direction.length > 0
+    ) {
+      messageDirection = comm.message_direction;
+    }
+    if (typeof comm.reason === 'string' && comm.reason.length > 0) {
+      reasonText = comm.reason;
+    }
+    if (typeof comm.advice_given === 'string' && comm.advice_given.length > 0) {
+      adviceGivenText = comm.advice_given;
+    }
+    if (
+      typeof comm.patient_response === 'string' &&
+      comm.patient_response.length > 0
+    ) {
+      patientResponseText = comm.patient_response;
+    }
+  } else if (metadata && typeof (metadata as any).communication === 'object') {
+    const comm = (metadata as any).communication;
+
+    if (typeof comm.initiated_by === 'string' && comm.initiated_by.length > 0) {
+      initiatedBy = comm.initiated_by;
+    }
+    if (
+      typeof comm.message_direction === 'string' &&
+      comm.message_direction.length > 0
+    ) {
+      messageDirection = comm.message_direction;
+    }
+    if (typeof comm.reason === 'string' && comm.reason.length > 0) {
+      reasonText = comm.reason;
+    }
+    if (typeof comm.advice_given === 'string' && comm.advice_given.length > 0) {
+      adviceGivenText = comm.advice_given;
+    }
+    if (
+      typeof comm.patient_response === 'string' &&
+      comm.patient_response.length > 0
+    ) {
+      patientResponseText = comm.patient_response;
+    }
+  }
+
+  // If nothing meaningful is present, do not insert/update.
+  if (
+    !initiatedBy &&
+    !messageDirection &&
+    !reasonText &&
+    !adviceGivenText &&
+    !patientResponseText
+  ) {
+    return;
+  }
+
+  // Normalize enum values to avoid DB truncation.
+  if (initiatedBy && !COMM_INITIATED_VALUES.includes(initiatedBy)) {
+    initiatedBy = 'other';
+  }
+  if (messageDirection && !COMM_DIRECTION_VALUES.includes(messageDirection)) {
+    messageDirection = 'unknown';
+  }
+
+  await db.query(
+    `
+      INSERT INTO document_communications (
+        document_id,
+        encounter_date,
+        initiated_by,
+        message_direction,
+        reason_text,
+        advice_given_text,
+        patient_response_text
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        encounter_date = VALUES(encounter_date),
+        initiated_by = VALUES(initiated_by),
+        message_direction = VALUES(message_direction),
+        reason_text = VALUES(reason_text),
+        advice_given_text = VALUES(advice_given_text),
+        patient_response_text = VALUES(patient_response_text)
+    `,
+    [
+      documentId,
+      encounterDateValue,
+      initiatedBy,
+      messageDirection,
+      reasonText,
+      adviceGivenText,
+      patientResponseText,
+    ],
+  );
+}
+
 export async function updateDocumentProjectionsForVectorStoreFile(
   vectorStoreFileId: string,
   _metadata: any,
@@ -959,5 +1099,6 @@ export async function updateDocumentProjectionsForVectorStoreFile(
   await upsertDocumentSmoking(db, documentId, encounterDate, metadata);
   await upsertDocumentMentalHealth(db, documentId, encounterDate, metadata);
   await upsertDocumentReferrals(db, documentId, encounterDate, metadata);
-   await upsertDocumentResults(db, documentId, encounterDate, metadata);
+  await upsertDocumentResults(db, documentId, encounterDate, metadata);
+  await upsertDocumentCommunications(db, documentId, encounterDate, metadata);
 }
