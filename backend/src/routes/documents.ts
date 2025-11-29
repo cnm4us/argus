@@ -119,6 +119,9 @@ async function extractMetadata(
         error instanceof Error ? error.message : String(error ?? '');
 
       logOpenAI('extractMetadata:error', {
+        documentType,
+        fileId,
+        fileName,
         attempt,
         status,
         error:
@@ -708,6 +711,8 @@ async function waitForVectorStoreFileReady(
   maxAttempts = 5,
   delayMs = 1000,
 ): Promise<boolean> {
+  let lastFileName: string | undefined;
+
   if (!config.vectorStoreId) {
     return false;
   }
@@ -718,6 +723,13 @@ async function waitForVectorStoreFileReady(
         vector_store_id: config.vectorStoreId,
       });
 
+      const attributes = (file.attributes ?? {}) as {
+        [key: string]: string | number | boolean;
+      };
+      if (typeof attributes.file_name === 'string') {
+        lastFileName = attributes.file_name;
+      }
+
       if (file.status === 'completed') {
         return true;
       }
@@ -726,6 +738,7 @@ async function waitForVectorStoreFileReady(
         logOpenAI('vectorStoreFile:not_ready', {
           vectorStoreFileId,
           status: file.status,
+          fileName: lastFileName,
         });
         return false;
       }
@@ -744,6 +757,7 @@ async function waitForVectorStoreFileReady(
 
   logOpenAI('vectorStoreFile:not_ready_timeout', {
     vectorStoreFileId,
+    fileName: lastFileName,
     attempts: maxAttempts,
   });
 
@@ -921,6 +935,7 @@ router.post(
               logOpenAI('backgroundMetadata:start', {
                 documentType: effectiveDocumentType,
                 fileId: file.id,
+                fileName: originalname,
                 vectorStoreFileId: vectorStoreFile.id,
               });
 
@@ -935,6 +950,7 @@ router.post(
                   reason: 'extractMetadata returned null',
                   documentType: effectiveDocumentType,
                   fileId: file.id,
+                  fileName: originalname,
                   vectorStoreFileId: vectorStoreFile.id,
                 });
                 return;
@@ -987,6 +1003,7 @@ router.post(
                     });
                   } else {
                     logOpenAI('backgroundMetadata:vs_not_ready', {
+                      fileName: originalname,
                       vectorStoreFileId: vectorStoreFile.id,
                     });
                   }
@@ -996,6 +1013,7 @@ router.post(
                       err instanceof Error
                         ? { message: err.message, stack: err.stack }
                         : err,
+                    fileName: originalname,
                     vectorStoreFileId: vectorStoreFile.id,
                   });
                 }
@@ -1052,6 +1070,7 @@ router.post(
                     err instanceof Error
                       ? { message: err.message, stack: err.stack }
                       : err,
+                  fileName: originalname,
                   vectorStoreFileId: vectorStoreFile.id,
                 });
               }
@@ -1059,6 +1078,7 @@ router.post(
               logOpenAI('backgroundMetadata:success', {
                 documentType: effectiveDocumentType,
                 fileId: file.id,
+                fileName: originalname,
                 vectorStoreFileId: vectorStoreFile.id,
               });
 
@@ -1068,6 +1088,7 @@ router.post(
             // For unclassified uploads, run classification only (no automatic metadata).
             logOpenAI('classify:background:start', {
               fileId: file.id,
+              fileName: originalname,
               vectorStoreFileId: vectorStoreFile.id,
             });
 
@@ -1079,6 +1100,7 @@ router.post(
               logOpenAI('classify:background:skip', {
                 reason: 'classification returned null',
                 fileId: file.id,
+                fileName: originalname,
                 vectorStoreFileId: vectorStoreFile.id,
               });
               return;
@@ -1098,6 +1120,7 @@ router.post(
                 confidence,
                 threshold,
                 fileId: file.id,
+                fileName: originalname,
                 vectorStoreFileId: vectorStoreFile.id,
               });
               return;
@@ -1122,6 +1145,7 @@ router.post(
                   });
                 } else {
                   logOpenAI('classify:background:vs_not_ready', {
+                    fileName: originalname,
                     vectorStoreFileId: vectorStoreFile.id,
                   });
                 }
@@ -1131,6 +1155,7 @@ router.post(
                     err instanceof Error
                       ? { message: err.message, stack: err.stack }
                       : err,
+                  fileName: originalname,
                   vectorStoreFileId: vectorStoreFile.id,
                 });
               }
@@ -1153,6 +1178,7 @@ router.post(
                   err instanceof Error
                     ? { message: err.message, stack: err.stack }
                     : err,
+                fileName: originalname,
                 vectorStoreFileId: vectorStoreFile.id,
               });
             }
@@ -1161,6 +1187,7 @@ router.post(
               predictedType,
               confidence,
               fileId: file.id,
+              fileName: originalname,
               vectorStoreFileId: vectorStoreFile.id,
             });
 
@@ -1174,18 +1201,21 @@ router.post(
             logOpenAI('backgroundMetadata:after_classify:enter', {
               documentType: classifiedType,
               fileId: file.id,
+              fileName: originalname,
               vectorStoreFileId: vectorStoreFile.id,
             });
 
             logOpenAI('backgroundMetadata:after_classify:start', {
               documentType: classifiedType,
               fileId: file.id,
+              fileName: originalname,
               vectorStoreFileId: vectorStoreFile.id,
             });
 
             logOpenAI('backgroundMetadata:after_classify:before_extract', {
               documentType: classifiedType,
               fileId: file.id,
+              fileName: originalname,
               vectorStoreFileId: vectorStoreFile.id,
             });
 
@@ -1200,6 +1230,7 @@ router.post(
                 reason: 'extractMetadata returned null',
                 documentType: classifiedType,
                 fileId: file.id,
+                fileName: originalname,
                 vectorStoreFileId: vectorStoreFile.id,
               });
               return;
@@ -1227,6 +1258,7 @@ router.post(
             logOpenAI('backgroundMetadata:after_classify:after_extract', {
               documentType: classifiedType,
               fileId: file.id,
+              fileName: originalname,
               vectorStoreFileId: vectorStoreFile.id,
             });
 
@@ -1260,6 +1292,7 @@ router.post(
                   });
                 } else {
                   logOpenAI('backgroundMetadata:after_classify:vs_not_ready', {
+                    fileName: originalname,
                     vectorStoreFileId: vectorStoreFile.id,
                   });
                 }
@@ -1269,6 +1302,7 @@ router.post(
                     err instanceof Error
                       ? { message: err.message, stack: err.stack }
                       : err,
+                  fileName: originalname,
                   vectorStoreFileId: vectorStoreFile.id,
                 });
               }
@@ -1325,6 +1359,7 @@ router.post(
                   err instanceof Error
                     ? { message: err.message, stack: err.stack }
                     : err,
+                fileName: originalname,
                 vectorStoreFileId: vectorStoreFile.id,
               });
             }
@@ -1332,6 +1367,7 @@ router.post(
             logOpenAI('backgroundMetadata:after_classify:success', {
               documentType: classifiedType,
               fileId: file.id,
+              fileName: originalname,
               vectorStoreFileId: vectorStoreFile.id,
             });
             });
@@ -1342,6 +1378,9 @@ router.post(
                 err instanceof Error
                   ? { message: err.message, stack: err.stack }
                   : err,
+              fileId: file.id,
+              fileName: originalname,
+              vectorStoreFileId: vectorStoreFile.id,
             });
           }
         })();

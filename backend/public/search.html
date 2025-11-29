@@ -56,7 +56,13 @@
         gap: 0.75rem;
       }
       .date-range-row > div {
-        flex: 1;
+        flex: 0 0 auto;
+      }
+      .date-range-row > div:first-child {
+        margin-right: 0.75rem;
+      }
+      .date-range-row input[type='date'] {
+        max-width: 160px;
       }
       label {
         font-size: 0.85rem;
@@ -114,6 +120,14 @@
       th {
         text-align: left;
         background: #f3f4f6;
+      }
+      th.sortable {
+        cursor: pointer;
+        user-select: none;
+      }
+      th.date-col,
+      td.date-col {
+        white-space: nowrap;
       }
       a {
         color: #2563eb;
@@ -177,6 +191,12 @@
             <option value="">Any</option>
           </select>
         </div>
+        <div>
+          <label for="keyword">Keyword</label>
+          <select id="keyword" name="keyword">
+            <option value="">Any</option>
+          </select>
+        </div>
         <div class="filters-date-range">
           <label>Date Range</label>
           <div class="date-range-row">
@@ -192,6 +212,15 @@
         </div>
       </div>
 
+      <div class="filters-query">
+        <label for="query">Query</label>
+        <input
+          id="query"
+          type="text"
+          placeholder="e.g. referrals to pulmonology in 2023"
+        />
+      </div>
+
       <div class="controls">
         <button id="search-btn">Search</button>
       </div>
@@ -201,10 +230,13 @@
       <table>
         <thead>
           <tr>
-            <th>Date</th>
-            <th>File Name</th>
-            <th>Provider</th>
-            <th>Clinic / Facility</th>
+            <th class="sortable date-col" data-sort-key="date">Date</th>
+            <th class="sortable" data-sort-key="filename">File Name</th>
+            <th class="sortable" data-sort-key="providerName">Provider</th>
+            <th class="sortable" data-sort-key="clinicOrFacility">
+              Clinic / Facility
+            </th>
+            <th class="sortable" data-sort-key="score">Score</th>
           </tr>
         </thead>
         <tbody id="results-body"></tbody>
@@ -219,7 +251,12 @@
       const dateToInput = document.getElementById('date_to');
       const providerSelect = document.getElementById('provider_name');
       const clinicSelect = document.getElementById('clinic_or_facility');
+      const queryInput = document.getElementById('query');
+      const keywordSelect = document.getElementById('keyword');
       let dateRangeInitialized = false;
+      let currentItems = [];
+      let currentSortKey = 'date';
+      let currentSortDir = 'desc';
 
       async function loadOptions() {
         try {
@@ -235,6 +272,7 @@
 
           const providers = json.providers || [];
           const clinics = json.clinics || [];
+          const keywords = json.keywords || [];
 
           for (const name of providers) {
             if (!name) continue;
@@ -251,8 +289,98 @@
             opt.textContent = name;
             clinicSelect.appendChild(opt);
           }
+
+          if (keywordSelect) {
+            for (const kw of keywords) {
+              if (!kw) continue;
+              const opt = document.createElement('option');
+              opt.value = kw;
+              opt.textContent = kw;
+              keywordSelect.appendChild(opt);
+            }
+          }
         } catch (err) {
           console.error('Error loading search options', err);
+        }
+      }
+
+      function sortItems(items) {
+        const sorted = [...items];
+        sorted.sort((a, b) => {
+          if (currentSortKey === 'score') {
+            const sa =
+              typeof a.score === 'number' ? a.score : Number.NEGATIVE_INFINITY;
+            const sb =
+              typeof b.score === 'number' ? b.score : Number.NEGATIVE_INFINITY;
+            if (sa === sb) return 0;
+            return currentSortDir === 'asc' ? sa - sb : sb - sa;
+          }
+
+          if (currentSortKey === 'date') {
+            const da = a.date || '';
+            const db = b.date || '';
+            if (da === db) return 0;
+            return currentSortDir === 'asc' ? (da < db ? -1 : 1) : da > db ? -1 : 1;
+          }
+
+          const aVal =
+            (a[currentSortKey] || '').toString().toLowerCase();
+          const bVal =
+            (b[currentSortKey] || '').toString().toLowerCase();
+
+          if (aVal === bVal) return 0;
+          return currentSortDir === 'asc'
+            ? aVal < bVal
+              ? -1
+              : 1
+            : aVal > bVal
+            ? -1
+            : 1;
+        });
+        return sorted;
+      }
+
+      function renderResults(items) {
+        resultsBody.innerHTML = '';
+
+        const sorted = sortItems(items);
+
+        for (const item of sorted) {
+          const tr = document.createElement('tr');
+
+          const dateTd = document.createElement('td');
+          dateTd.className = 'date-col';
+          dateTd.textContent = item.date || '';
+          tr.appendChild(dateTd);
+
+          const fileTd = document.createElement('td');
+          const link = document.createElement('a');
+          link.href = `/api/files/${encodeURIComponent(item.fileId)}`;
+          link.target = '_blank';
+          link.textContent = item.filename || '(unknown)';
+          fileTd.appendChild(link);
+          tr.appendChild(fileTd);
+
+          const providerTd = document.createElement('td');
+          providerTd.textContent = item.providerName || '';
+          tr.appendChild(providerTd);
+
+          const clinicTd = document.createElement('td');
+          clinicTd.textContent = item.clinicOrFacility || '';
+          tr.appendChild(clinicTd);
+
+          const scoreTd = document.createElement('td');
+          if (typeof item.score === 'number') {
+            const raw = item.score;
+            const clamped =
+              raw <= 1 && raw >= 0 ? raw : raw > 1 ? Math.min(raw / 100, 1) : 0;
+            scoreTd.textContent = (clamped * 100).toFixed(1) + '%';
+          } else {
+            scoreTd.textContent = '';
+          }
+          tr.appendChild(scoreTd);
+
+          resultsBody.appendChild(tr);
         }
       }
 
@@ -260,19 +388,22 @@
         statusEl.textContent = 'Searching…';
         statusEl.className = 'status-line';
         searchBtn.disabled = true;
-        resultsBody.innerHTML = '';
 
+        const query = queryInput.value.trim();
         const documentType = document.getElementById('document_type').value;
         const providerName = providerSelect.value.trim();
         const clinicOrFacility = clinicSelect.value.trim();
+        const keyword = keywordSelect ? keywordSelect.value : '';
         const dateFrom = dateFromInput.value;
         const dateTo = dateToInput.value;
 
         const params = new URLSearchParams();
+        if (query) params.set('query', query);
         if (documentType) params.set('document_type', documentType);
         if (providerName) params.set('provider_name', providerName);
         if (clinicOrFacility)
           params.set('clinic_or_facility', clinicOrFacility);
+        if (keyword) params.set('keyword', keyword);
         if (dateFrom) params.set('date_from', dateFrom);
         if (dateTo) params.set('date_to', dateTo);
 
@@ -315,31 +446,8 @@
             dateRangeInitialized = true;
           }
 
-          for (const item of items) {
-            const tr = document.createElement('tr');
-
-            const dateTd = document.createElement('td');
-            dateTd.textContent = item.date || '';
-            tr.appendChild(dateTd);
-
-            const fileTd = document.createElement('td');
-            const link = document.createElement('a');
-            link.href = `/api/files/${encodeURIComponent(item.fileId)}`;
-            link.target = '_blank';
-            link.textContent = item.filename || '(unknown)';
-            fileTd.appendChild(link);
-            tr.appendChild(fileTd);
-
-            const providerTd = document.createElement('td');
-            providerTd.textContent = item.providerName || '';
-            tr.appendChild(providerTd);
-
-            const clinicTd = document.createElement('td');
-            clinicTd.textContent = item.clinicOrFacility || '';
-            tr.appendChild(clinicTd);
-
-            resultsBody.appendChild(tr);
-          }
+          currentItems = items;
+          renderResults(currentItems);
         } catch (err) {
           console.error(err);
           statusEl.textContent =
@@ -351,6 +459,30 @@
       }
 
       searchBtn.addEventListener('click', runSearch);
+
+      queryInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          runSearch();
+        }
+      });
+
+      const headerCells = document.querySelectorAll('thead th.sortable');
+      headerCells.forEach((th) => {
+        const key = th.getAttribute('data-sort-key');
+        if (!key) return;
+        th.addEventListener('click', () => {
+          if (currentSortKey === key) {
+            currentSortDir = currentSortDir === 'asc' ? 'desc' : 'asc';
+          } else {
+            currentSortKey = key;
+            currentSortDir = key === 'date' || key === 'filename' ? 'desc' : 'asc';
+            if (key === 'score') {
+              currentSortDir = 'desc';
+            }
+          }
+          renderResults(currentItems);
+        });
+      });
 
       // Initial load: options + search with no filters.
       loadOptions();

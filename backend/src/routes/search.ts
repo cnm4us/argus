@@ -16,6 +16,7 @@ interface SearchRequestBody {
   clinic_or_facility?: string;
   date_from?: string;
   date_to?: string;
+   keyword?: string;
   include_inactive?: boolean;
 }
 
@@ -86,8 +87,89 @@ function buildFilters(body: SearchRequestBody): ComparisonFilter | CompoundFilte
   return compound;
 }
 
+async function runVectorSearchForDb(
+  query: string,
+  params: {
+    document_type?: string;
+    provider_name?: string;
+    clinic_or_facility?: string;
+    date_from?: string;
+    date_to?: string;
+  },
+): Promise<{ fileIds: string[]; scoresByFileId: Record<string, number> }> {
+  if (!config.vectorStoreId) {
+    return { fileIds: [], scoresByFileId: {} };
+  }
+
+  const body: SearchRequestBody = {
+    query,
+    document_type: params.document_type,
+    provider_name: params.provider_name,
+    clinic_or_facility: params.clinic_or_facility,
+    date_from: params.date_from,
+    date_to: params.date_to,
+    // DB search does not filter on is_active, so include inactive files here too.
+    include_inactive: true,
+  };
+
+  const filters = buildFilters(body);
+
+  const response = await openai.responses.create({
+    model: 'gpt-4.1-mini',
+    instructions:
+      'You are a retrieval assistant for a single patient\'s medical/legal record. ' +
+      'Use the file_search tool to retrieve documents relevant to the user query. ' +
+      'You do not need to write an answer; we only care about which files you retrieve.',
+    input: [
+      {
+        role: 'user',
+        type: 'message',
+        content: [
+          {
+            type: 'input_text',
+            text: query,
+          },
+        ],
+      },
+    ],
+    tools: [
+      {
+        type: 'file_search',
+        vector_store_ids: [config.vectorStoreId],
+        max_num_results: 50,
+        filters: filters ?? null,
+      },
+    ],
+    include: ['file_search_call.results'],
+  });
+
+  const fileSearchCall: any = (response as any).output?.find(
+    (item: any) => item.type === 'file_search_call',
+  );
+
+  const results = (fileSearchCall?.results ?? []) as any[];
+
+  const fileIds: string[] = [];
+  const scoresByFileId: Record<string, number> = {};
+
+  for (const r of results) {
+    const fileId = typeof r.file_id === 'string' ? (r.file_id as string) : '';
+    if (!fileId) continue;
+    if (scoresByFileId[fileId] !== undefined) continue;
+
+    fileIds.push(fileId);
+    const score =
+      typeof r.score === 'number'
+        ? (r.score as number)
+        : 0;
+    scoresByFileId[fileId] = score;
+  }
+
+  return { fileIds, scoresByFileId };
+}
+
 // GET /api/search/options
-// Return distinct provider_name and clinic_or_facility values to populate filters.
+// Return distinct provider_name, clinic_or_facility, and keywords values to populate filters.
 router.get('/options', requireAuth, async (_req: Request, res: Response) => {
   try {
     const db = await getDb();
@@ -110,6 +192,14 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
       `,
     )) as any[];
 
+    const [keywordRows] = (await db.query(
+      `
+        SELECT metadata_json
+        FROM documents
+        WHERE JSON_TYPE(metadata_json) = 'OBJECT'
+      `,
+    )) as any[];
+
     const providers = Array.isArray(providerRows)
       ? (providerRows as any[]).map((row) => row.provider_name as string)
       : [];
@@ -119,7 +209,39 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
         )
       : [];
 
-    res.json({ providers, clinics });
+    const keywordSet = new Set<string>();
+    if (Array.isArray(keywordRows)) {
+      for (const row of keywordRows as any[]) {
+        let meta: any = row.metadata_json;
+        if (typeof meta === 'string') {
+          try {
+            meta = JSON.parse(meta);
+          } catch {
+            meta = null;
+          }
+        }
+
+        if (!meta || typeof meta !== 'object') {
+          continue;
+        }
+
+        const kws = (meta as any).keywords;
+        if (Array.isArray(kws)) {
+          for (const kw of kws) {
+            if (typeof kw !== 'string') continue;
+            const trimmed = kw.trim();
+            if (!trimmed) continue;
+            keywordSet.add(trimmed);
+          }
+        }
+      }
+    }
+
+    const keywords = Array.from(keywordSet).sort((a, b) =>
+      a.localeCompare(b),
+    );
+
+    res.json({ providers, clinics, keywords });
   } catch (error) {
     console.error('Error in GET /api/search/options:', error);
     res.status(500).json({ error: 'Failed to load search options' });
@@ -128,7 +250,7 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
 
 // GET /api/search/db
 // Simple DB-backed search over the documents table using basic filters.
-// Query params: document_type?, provider_name?, clinic_or_facility?, date_from?, date_to?
+// Query params: document_type?, provider_name?, clinic_or_facility?, date_from?, date_to?, keyword?, query?
 router.get('/db', requireAuth, async (req: Request, res: Response) => {
   try {
     const {
@@ -137,13 +259,19 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
       clinic_or_facility,
       date_from,
       date_to,
+      keyword,
+      query,
     } = req.query as {
       document_type?: string;
       provider_name?: string;
       clinic_or_facility?: string;
       date_from?: string;
       date_to?: string;
+      keyword?: string;
+      query?: string;
     };
+
+    const searchQuery = (query || '').trim();
 
     const where: string[] = [];
     const params: any[] = [];
@@ -173,6 +301,47 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
       params.push(date_to.trim());
     }
 
+    if (keyword && keyword.trim() !== '') {
+      where.push(
+        "JSON_CONTAINS(metadata_json, JSON_QUOTE(?), '$.keywords')",
+      );
+      params.push(keyword.trim());
+    }
+
+    // If a natural-language query is provided, use vector search to
+    // identify relevant files and intersect that with the DB filters.
+    let scoresByFileId: Record<string, number> = {};
+    if (searchQuery) {
+      if (!config.vectorStoreId) {
+        console.warn(
+          'Vector search query provided but ARGUS_VECTOR_STORE_ID is not configured; falling back to DB-only filters.',
+        );
+      } else {
+        const { fileIds, scoresByFileId: scores } = await runVectorSearchForDb(
+          searchQuery,
+          {
+            document_type,
+            provider_name,
+            clinic_or_facility,
+            date_from,
+            date_to,
+          },
+        );
+
+        // If nothing matched the vector search, short-circuit with empty results.
+        if (fileIds.length === 0) {
+          res.json({ items: [] });
+          return;
+        }
+
+        scoresByFileId = scores;
+
+        const placeholders = fileIds.map(() => '?').join(', ');
+        where.push(`openai_file_id IN (${placeholders})`);
+        params.push(...fileIds);
+      }
+    }
+
     const db = await getDb();
     const sql = `
       SELECT
@@ -189,7 +358,7 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
     `;
 
     const [rows] = (await db.query(sql, params)) as any[];
-    const items = (Array.isArray(rows) ? rows : []).map((row) => {
+    let items = (Array.isArray(rows) ? rows : []).map((row) => {
       const dateValue = row.date as Date | string | null;
       const dateStr =
         !dateValue
@@ -198,16 +367,40 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
           ? dateValue
           : (dateValue as Date).toISOString().slice(0, 10);
 
+      const fileId = row.openai_file_id as string;
+      const score =
+        searchQuery && Object.prototype.hasOwnProperty.call(scoresByFileId, fileId)
+          ? (scoresByFileId[fileId] as number)
+          : null;
+
       return {
         id: row.vector_store_file_id as string,
-        fileId: row.openai_file_id as string,
+        fileId,
         filename: row.filename as string,
         documentType: row.document_type as string,
         date: dateStr,
         providerName: (row.provider_name as string | null) ?? '',
         clinicOrFacility: (row.clinic_or_facility as string | null) ?? '',
+        score,
       };
     });
+
+    // When vector search is used, re-sort results by relevance score
+    // (descending), falling back to date ordering when scores are equal.
+    if (searchQuery && Object.keys(scoresByFileId).length > 0) {
+      items = items.sort((a, b) => {
+        const sa = typeof a.score === 'number' ? a.score : 0;
+        const sb = typeof b.score === 'number' ? b.score : 0;
+        if (sa !== sb) {
+          return sb - sa;
+        }
+
+        const da = a.date || '';
+        const dbDate = b.date || '';
+        if (da === dbDate) return 0;
+        return da < dbDate ? 1 : -1;
+      });
+    }
 
     res.json({ items });
   } catch (error) {
