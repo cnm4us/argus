@@ -155,6 +155,90 @@ async function extractMetadata(
   return null;
 }
 
+async function extractMarkdown(
+  fileId: string,
+  fileName: string,
+): Promise<string | null> {
+  try {
+    logOpenAI('extractMarkdown:start', {
+      fileId,
+      fileName,
+    });
+
+    const instructions =
+      'You are a medical document transcription assistant. ' +
+      'Convert the attached document into clean, readable Markdown. ' +
+      'Preserve headings, lists, and tables where possible. ' +
+      'Do NOT summarize or omit sections; include all legible text content. ' +
+      'Output ONLY the Markdown, with no extra commentary.';
+
+    const response = await openai.responses.create({
+      model: 'gpt-4.1',
+      instructions,
+      input: [
+        {
+          role: 'user',
+          type: 'message',
+          content: [
+            {
+              type: 'input_text',
+              text:
+                'Transcribe this document into Markdown as described. ' +
+                'If any portions are illegible, mark them as [[illegible]] rather than guessing.',
+            },
+            {
+              type: 'input_file',
+              file_id: fileId,
+            },
+          ],
+        },
+      ],
+    });
+
+    const rawText =
+      ((response as any).output?.[0]?.content?.[0]?.text as
+        string | undefined) ??
+      ((response as any).output_text as string | undefined);
+
+    if (!rawText) {
+      logOpenAI('extractMarkdown:error', {
+        fileId,
+        fileName,
+        error: { message: 'No text output from markdown extraction model' },
+      });
+      return null;
+    }
+
+    logOpenAI('extractMarkdown:success', {
+      fileId,
+      fileName,
+      length: rawText.length,
+    });
+
+    return rawText;
+  } catch (error) {
+    const status = (error as any)?.status;
+    logOpenAI('extractMarkdown:error', {
+      status,
+      fileId,
+      fileName,
+      error:
+        error instanceof Error
+          ? { message: error.message, stack: error.stack }
+          : error,
+    });
+
+    if (status === 429) {
+      console.error(
+        '[OpenAI rate limit] extractMarkdown received 429 for',
+        fileName,
+      );
+    }
+
+    return null;
+  }
+}
+
 interface ClassificationResult {
   predictedType: DocumentType | 'unclassified' | null;
   confidence: number | null;
@@ -1122,6 +1206,14 @@ router.post(
       let highLevelClassification: HighLevelClassificationResult | null = null;
       let moduleSelection: ModuleSelectionResult | null = null;
       let moduleOutputs: Record<string, any> = {};
+      let markdown: string | null = null;
+
+      // 1b) Extract a full-text Markdown transcription of the document.
+      try {
+        markdown = await extractMarkdown(file.id, originalname);
+      } catch (err) {
+        console.error('Markdown extraction failed:', err);
+      }
 
       if (!asyncMode) {
         // 2) Extract structured metadata using the templates and file (synchronous path).
@@ -1166,7 +1258,7 @@ router.post(
         },
       );
 
-      // 4) Persist metadata snapshot into MariaDB.
+      // 4) Persist metadata snapshot into MariaDB (including Markdown, when available).
       let documentDbId: number | null = null;
       try {
         const db = await getDb();
@@ -1197,8 +1289,9 @@ router.post(
             clinic_or_facility,
             is_active,
             needs_metadata,
-            metadata_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            metadata_json,
+            markdown
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
           [
             vectorStoreFile.id,
@@ -1212,6 +1305,7 @@ router.post(
             1,
             metadata ? 0 : 1,
             JSON.stringify(metadataPayload),
+            markdown,
           ],
         )) as any[];
 

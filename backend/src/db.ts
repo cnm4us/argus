@@ -39,6 +39,7 @@ export async function initDb(): Promise<void> {
       is_active            TINYINT(1)   NOT NULL DEFAULT 1,
       needs_metadata       TINYINT(1)   NOT NULL DEFAULT 0,
       metadata_json        JSON         NOT NULL,
+      markdown             LONGTEXT     NULL,
       created_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uniq_vs_file (vector_store_file_id),
@@ -83,6 +84,19 @@ export async function initDb(): Promise<void> {
           WHEN JSON_TYPE(metadata_json) = 'OBJECT' AND JSON_LENGTH(metadata_json) > 0 THEN 0
           ELSE 1
         END
+      `,
+    );
+  }
+
+  // Backfill for existing installations: ensure markdown column exists.
+  const [markdownRows] = (await db.query(
+    "SHOW COLUMNS FROM documents LIKE 'markdown'",
+  )) as any[];
+  if (!Array.isArray(markdownRows) || markdownRows.length === 0) {
+    await db.query(
+      `
+        ALTER TABLE documents
+        ADD COLUMN markdown LONGTEXT NULL AFTER metadata_json
       `,
     );
   }
