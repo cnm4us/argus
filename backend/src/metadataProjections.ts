@@ -1,6 +1,6 @@
 import type mysql from 'mysql2/promise';
 import { getDb } from './db';
-import { insertDocumentTerm } from './taxonomy';
+import { insertDocumentTerm, insertDocumentTermEvidence } from './taxonomy';
 
 function normalizeDate(value: Date | string | null): string | null {
   if (!value) return null;
@@ -1066,7 +1066,28 @@ async function upsertDocumentCommunications(
 async function updateTaxonomyFromProjections(
   db: mysql.Pool,
   documentId: number,
+  metadata: any,
 ): Promise<void> {
+  // Clear existing rule-based evidence for projection-backed taxonomy categories for this document.
+  // LLM-driven taxonomy evidence (from runTaxonomyExtractionForDocument) uses different keyword ids
+  // and is not affected by this cleanup.
+  try {
+    await db.query(
+      `
+        DELETE FROM document_term_evidence
+        WHERE document_id = ?
+          AND (
+            keyword_id LIKE 'vitals.%' OR
+            keyword_id LIKE 'smoking.%' OR
+            keyword_id LIKE 'mental_health.%' OR
+            keyword_id LIKE 'sexual_history.%'
+          )
+      `,
+      [documentId],
+    );
+  } catch {
+    // Best-effort; evidence deduplication is diagnostic only.
+  }
   // Vitals: tag any document that has any vitals.
   try {
     const [vRows] = (await db.query(
@@ -1084,13 +1105,38 @@ async function updateTaxonomyFromProjections(
       `,
       [documentId],
     )) as any[];
-    if (Array.isArray(vRows) && vRows.length > 0) {
-      const v = vRows[0] as any;
+      if (Array.isArray(vRows) && vRows.length > 0) {
+        const v = vRows[0] as any;
+        // Build a human-readable vitals snippet from available metadata for debugging.
+        const vitalsSnippetParts: string[] = [];
+        const metadataVitals = (metadata as any).vitals ?? null;
+        const metadataVitalsObj =
+          metadataVitals && typeof metadataVitals === 'object'
+            ? (metadataVitals as any)
+            : null;
+
+        const bpText =
+          metadataVitalsObj && typeof metadataVitalsObj.blood_pressure === 'string'
+            ? (metadataVitalsObj.blood_pressure as string)
+            : null;
+        if (bpText) {
+          vitalsSnippetParts.push(`BP ${bpText}`);
+        }
       if (v.has_vitals === 1) {
         await insertDocumentTerm({
           connection: db,
           documentId,
           keywordId: 'vitals.any_mention',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'vitals.any_mention',
+          evidenceType: 'rule',
+          evidenceText:
+            vitalsSnippetParts.length > 0
+              ? `Vital signs documented: ${vitalsSnippetParts.join('; ')}`
+              : 'document_vitals.has_vitals=1 (at least one vital sign present).',
         });
       }
       if (v.spo2_is_low === 1) {
@@ -1098,6 +1144,19 @@ async function updateTaxonomyFromProjections(
           connection: db,
           documentId,
           keywordId: 'vitals.hypoxia',
+        });
+        const spo2Val =
+          typeof v.spo2 === 'number' && Number.isFinite(v.spo2)
+            ? (v.spo2 as number)
+            : null;
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'vitals.hypoxia',
+          evidenceType: 'rule',
+          evidenceText: spo2Val !== null
+            ? `spo2_is_low=1 (spo2=${spo2Val})`
+            : 'spo2_is_low=1',
         });
       }
 
@@ -1122,6 +1181,13 @@ async function updateTaxonomyFromProjections(
           documentId,
           keywordId: 'vitals.hypotension',
         });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'vitals.hypotension',
+          evidenceType: 'rule',
+          evidenceText: `blood_pressure_systolic=${sbp ?? 'null'}, blood_pressure_diastolic=${dbp ?? 'null'} (hypotension rule: SBP < 90 or DBP < 60).`,
+        });
       }
 
       if (hr !== null && hr >= 120) {
@@ -1130,6 +1196,13 @@ async function updateTaxonomyFromProjections(
           documentId,
           keywordId: 'vitals.tachycardia',
         });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'vitals.tachycardia',
+          evidenceType: 'rule',
+          evidenceText: `heart_rate=${hr} (tachycardia rule: HR >= 120).`,
+        });
       }
 
       if (tempF !== null && tempF >= 100.4) {
@@ -1137,6 +1210,13 @@ async function updateTaxonomyFromProjections(
           connection: db,
           documentId,
           keywordId: 'vitals.fever',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'vitals.fever',
+          evidenceType: 'rule',
+          evidenceText: `temperature_f=${tempF} (fever rule: temp >= 100.4°F).`,
         });
       }
     }
@@ -1185,6 +1265,13 @@ async function updateTaxonomyFromProjections(
           documentId,
           keywordId: 'smoking.any_mention',
         });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'smoking.any_mention',
+          evidenceType: 'rule',
+          evidenceText: `has_smoking_history_documented=${s.has_smoking_history_documented}, patient_status=${patientStatus ?? 'null'}, provider_status=${providerStatus ?? 'null'}.`,
+        });
       }
 
       if (status === 'current') {
@@ -1193,17 +1280,38 @@ async function updateTaxonomyFromProjections(
           documentId,
           keywordId: 'smoking.current_smoker',
         });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'smoking.current_smoker',
+          evidenceType: 'rule',
+          evidenceText: `smoking status derived as "current" (patient_status=${patientStatus ?? 'null'}, provider_status=${providerStatus ?? 'null'}).`,
+        });
       } else if (status === 'former') {
         await insertDocumentTerm({
           connection: db,
           documentId,
           keywordId: 'smoking.former_smoker',
         });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'smoking.former_smoker',
+          evidenceType: 'rule',
+          evidenceText: `smoking status derived as "former" (patient_status=${patientStatus ?? 'null'}, provider_status=${providerStatus ?? 'null'}).`,
+        });
       } else if (status === 'never') {
         await insertDocumentTerm({
           connection: db,
           documentId,
           keywordId: 'smoking.never_smoker',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'smoking.never_smoker',
+          evidenceType: 'rule',
+          evidenceText: `smoking status derived as "never" (patient_status=${patientStatus ?? 'null'}, provider_status=${providerStatus ?? 'null'}).`,
         });
       }
 
@@ -1212,6 +1320,13 @@ async function updateTaxonomyFromProjections(
           connection: db,
           documentId,
           keywordId: 'smoking.cessation_counseling',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'smoking.cessation_counseling',
+          evidenceType: 'rule',
+          evidenceText: 'has_cessation_counseling=1.',
         });
       }
     }
@@ -1265,6 +1380,13 @@ async function updateTaxonomyFromProjections(
           documentId,
           keywordId: 'mental_health.any_mention',
         });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'mental_health.any_mention',
+          evidenceType: 'rule',
+          evidenceText: 'has_mental_health_content=1 (document_mental_health.has_mental_health_content).',
+        });
       }
 
       if (hasAnxiety) {
@@ -1272,6 +1394,13 @@ async function updateTaxonomyFromProjections(
           connection: db,
           documentId,
           keywordId: 'mental_health.anxiety',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'mental_health.anxiety',
+          evidenceType: 'rule',
+          evidenceText: `anxiety-related flags present (symptom_anxiety=${m.symptom_anxiety}, dx_anxiety_disorder=${m.dx_anxiety_disorder}).`,
         });
       }
 
@@ -1281,6 +1410,13 @@ async function updateTaxonomyFromProjections(
           documentId,
           keywordId: 'mental_health.depression',
         });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'mental_health.depression',
+          evidenceType: 'rule',
+          evidenceText: `depression-related flags present (symptom_depression=${m.symptom_depression}, dx_depressive_disorder=${m.dx_depressive_disorder}).`,
+        });
       }
 
       if (hasSUD) {
@@ -1288,6 +1424,229 @@ async function updateTaxonomyFromProjections(
           connection: db,
           documentId,
           keywordId: 'mental_health.substance_use_disorder',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'mental_health.substance_use_disorder',
+          evidenceType: 'rule',
+          evidenceText: `dx_substance_use_disorder=${m.dx_substance_use_disorder}.`,
+        });
+      }
+    }
+  } catch {
+    // Ignore taxonomy errors; projections remain valid.
+  }
+
+  // Sexual history: tag any sexual history mention and risky behaviors / STI risk.
+  try {
+    const modules = metadata && typeof metadata === 'object' ? (metadata as any).modules : null;
+    const sexualModule =
+      modules && typeof (modules as any).sexual_health === 'object'
+        ? (modules as any).sexual_health
+        : null;
+
+    if (sexualModule && typeof (sexualModule as any).sexual_health === 'object') {
+      const sh = (sexualModule as any).sexual_health;
+
+      const pra = (sh as any).patient_reported_activity ?? {};
+      const risk = (sh as any).provider_documented_risk_factors ?? {};
+      const reasonsRaw = (sh as any).reason_for_testing ?? [];
+      const reasons = Array.isArray(reasonsRaw) ? reasonsRaw.map((r) => String(r)) : [];
+      const historyOfStisRaw = (pra as any).history_of_stis ?? [];
+      const historyOfStis = Array.isArray(historyOfStisRaw)
+        ? historyOfStisRaw.map((v) => String(v).toLowerCase())
+        : [];
+      const reportedVariationsRaw = (pra as any).reported_variations ?? [];
+      const reportedVariations = Array.isArray(reportedVariationsRaw)
+        ? reportedVariationsRaw
+            .map((v: any) => String(v).trim())
+            .filter((s: string) => s.length > 0)
+        : [];
+
+      const sexuallyActiveVal =
+        typeof (pra as any).sexually_active === 'string'
+          ? ((pra as any).sexually_active as string)
+          : null;
+      const partnersCount =
+        typeof (pra as any).partners_count === 'number' &&
+        Number.isFinite((pra as any).partners_count)
+          ? ((pra as any).partners_count as number)
+          : null;
+      const newPartnerVal =
+        typeof (pra as any).new_partner === 'string'
+          ? ((pra as any).new_partner as string)
+          : null;
+      const condomUseVal =
+        typeof (pra as any).condom_use === 'string'
+          ? ((pra as any).condom_use as string)
+          : null;
+      const transactionalSexVal =
+        typeof (pra as any).transactional_sex === 'string'
+          ? ((pra as any).transactional_sex as string)
+          : null;
+
+      const mentionReasons: string[] = [];
+      const riskReasons: string[] = [];
+
+      const mentionEvidenceParts: string[] = [];
+
+      if (
+        sexuallyActiveVal &&
+        sexuallyActiveVal !== 'not_documented' &&
+        sexuallyActiveVal !== 'null'
+      ) {
+        mentionReasons.push(`sexually_active=${sexuallyActiveVal}`);
+
+        if (sexuallyActiveVal === 'yes') {
+          mentionEvidenceParts.push('patient is sexually active');
+        } else if (sexuallyActiveVal === 'no') {
+          mentionEvidenceParts.push('patient denies sexual activity');
+        } else if (sexuallyActiveVal === 'unsure') {
+          mentionEvidenceParts.push('sexual activity status uncertain');
+        }
+      }
+      if (partnersCount !== null) {
+        mentionReasons.push(`partners_count=${partnersCount}`);
+        mentionEvidenceParts.push(
+          `reports ${partnersCount} sexual partner(s) in history`,
+        );
+      }
+      if (newPartnerVal && newPartnerVal !== 'null') {
+        mentionReasons.push(`new_partner=${newPartnerVal}`);
+        if (newPartnerVal === 'yes') {
+          mentionEvidenceParts.push('reports a new sexual partner');
+        } else if (newPartnerVal === 'no') {
+          mentionEvidenceParts.push('no new sexual partner reported');
+        }
+      }
+      if (
+        condomUseVal &&
+        condomUseVal !== 'not_documented' &&
+        condomUseVal !== 'null'
+      ) {
+        mentionReasons.push(`condom_use=${condomUseVal}`);
+      }
+      if (
+        transactionalSexVal &&
+        transactionalSexVal !== 'not_documented' &&
+        transactionalSexVal !== 'null'
+      ) {
+        mentionReasons.push(`transactional_sex=${transactionalSexVal}`);
+        if (transactionalSexVal === 'yes') {
+          mentionEvidenceParts.push('transactional sex documented');
+        } else if (transactionalSexVal === 'no') {
+          mentionEvidenceParts.push('denies transactional sex');
+        } else if (transactionalSexVal === 'unsure') {
+          mentionEvidenceParts.push('uncertain about transactional sex history');
+        }
+      }
+      if (historyOfStis.length > 0) {
+        mentionReasons.push(
+          `history_of_stis=[${historyOfStis.join(', ')}]`,
+        );
+        const nonNone = historyOfStis.filter(
+          (h) => h !== 'none' && h !== 'unknown',
+        );
+        if (nonNone.length > 0) {
+          mentionEvidenceParts.push(
+            `history of STIs: ${nonNone.join(', ')}`,
+          );
+        } else if (historyOfStis.includes('none')) {
+          mentionEvidenceParts.push('denies prior STIs');
+        }
+      }
+      // Prefer using patient-reported variations directly as evidence when available.
+      if (reportedVariations.length > 0) {
+        mentionEvidenceParts.push(...reportedVariations);
+      }
+
+      const hasAnySexualMention = mentionReasons.length > 0;
+
+      const partnerPositive = (risk as any).partner_positive === true;
+      const riskNewPartner = (risk as any).new_partner === true;
+      const multiplePartners = (risk as any).multiple_partners === true;
+      const unprotectedSex = (risk as any).unprotected_sex === true;
+
+      const hasStiHistory = historyOfStis.some(
+        (h) =>
+          h === 'chlamydia' ||
+          h === 'gonorrhea' ||
+          h === 'hsv' ||
+          h === 'hiv' ||
+          h === 'syphilis',
+      );
+
+      // Risky sexual behavior should be driven by explicit risk behaviors or partner/STI history,
+      // not by symptoms or routine preventive screening alone.
+      if (partnerPositive) {
+        riskReasons.push('partner_positive=true');
+      }
+      if (riskNewPartner) {
+        riskReasons.push('new_partner=true (provider_documented_risk_factors)');
+      }
+      if (multiplePartners) {
+        riskReasons.push('multiple_partners=true');
+      }
+      if (unprotectedSex) {
+        riskReasons.push('unprotected_sex=true');
+      }
+      // routine_screening alone is not considered risky behavior; it reflects guideline-driven care.
+      if (hasStiHistory) {
+        riskReasons.push(
+          `history_of_stis includes STI of interest: [${historyOfStis.join(
+            ', ',
+          )}]`,
+        );
+      }
+      if (
+        transactionalSexVal &&
+        (transactionalSexVal === 'yes' || transactionalSexVal === 'unsure')
+      ) {
+        riskReasons.push(`transactional_sex=${transactionalSexVal}`);
+      }
+      if (partnersCount !== null && partnersCount > 1) {
+        riskReasons.push(`partners_count=${partnersCount} (>1)`);
+      }
+
+      const hasRiskyBehavior = riskReasons.length > 0;
+
+      if (hasAnySexualMention) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'sexual_history.any_mention',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'sexual_history.any_mention',
+          evidenceType: 'rule',
+          evidenceText:
+            mentionEvidenceParts.length > 0
+              ? `Sexual history / activity documented: ${mentionEvidenceParts.join(
+                  '; ',
+                )}`
+              : `Sexual history / activity documented via sexual_health module: ${mentionReasons.join(
+                  '; ',
+                )}`,
+        });
+      }
+
+      if (hasRiskyBehavior) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'sexual_history.risky_behavior',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'sexual_history.risky_behavior',
+          evidenceType: 'rule',
+          evidenceText: `Risky sexual behavior / STI risk inferred from sexual_health module signals: ${riskReasons.join(
+            '; ',
+          )}`,
         });
       }
     }
@@ -1335,5 +1694,5 @@ export async function updateDocumentProjectionsForVectorStoreFile(
   await upsertDocumentReferrals(db, documentId, encounterDate, metadata);
   await upsertDocumentResults(db, documentId, encounterDate, metadata);
   await upsertDocumentCommunications(db, documentId, encounterDate, metadata);
-  await updateTaxonomyFromProjections(db, documentId);
+  await updateTaxonomyFromProjections(db, documentId, metadata);
 }

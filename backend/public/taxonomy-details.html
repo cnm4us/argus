@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Argus – Taxonomy Details</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+          sans-serif;
+        margin: 0;
+        padding: 0;
+        background: #f3f4f6;
+      }
+      .navbar {
+        background: #111827;
+        color: #fff;
+        padding: 0.75rem 1.5rem;
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+      }
+      .navbar a {
+        color: #e5e7eb;
+        text-decoration: none;
+        font-size: 0.9rem;
+      }
+      .navbar a.active {
+        color: #ffffff;
+        font-weight: 600;
+      }
+      .container {
+        max-width: 800px;
+        margin: 2rem auto;
+        background: #ffffff;
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      }
+      h1 {
+        margin-top: 0;
+        font-size: 1.4rem;
+      }
+      .summary {
+        font-size: 0.9rem;
+        color: #4b5563;
+        margin-bottom: 1rem;
+      }
+      .term {
+        border-bottom: 1px solid #e5e7eb;
+        padding: 0.75rem 0;
+      }
+      .term:last-child {
+        border-bottom: none;
+      }
+      .term-title {
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+      }
+      .term-meta {
+        font-size: 0.85rem;
+        color: #6b7280;
+        margin-bottom: 0.25rem;
+      }
+      .evidence-list {
+        margin: 0.25rem 0 0 1.25rem;
+        padding: 0;
+        list-style: disc;
+        font-size: 0.9rem;
+      }
+      .evidence-list li {
+        margin-bottom: 0.15rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="navbar">
+      <a href="/login.html">Login</a>
+      <a href="/documents.html">Documents</a>
+      <a href="/search.html">Search</a>
+      <a href="/openai-documents.html">OpenAI</a>
+      <a href="/admin-modules.html">Admin</a>
+    </div>
+    <div class="container">
+      <h1>Taxonomy Details</h1>
+      <div id="summary" class="summary"></div>
+      <div id="terms"></div>
+    </div>
+
+    <script>
+      function getParam(name) {
+        const params = new URLSearchParams(window.location.search);
+        return params.get(name);
+      }
+
+      async function loadDetails() {
+        const vectorStoreFileId = getParam('id');
+        const categoryId = getParam('category_id') || '';
+        const keywordId = getParam('keyword_id') || '';
+        const subkeywordId = getParam('subkeyword_id') || '';
+
+        const summaryEl = document.getElementById('summary');
+        const termsEl = document.getElementById('terms');
+
+        if (!vectorStoreFileId) {
+          summaryEl.textContent = 'Missing document id.';
+          return;
+        }
+
+        const params = new URLSearchParams();
+        if (categoryId) params.set('category_id', categoryId);
+        if (keywordId) params.set('keyword_id', keywordId);
+        if (subkeywordId) params.set('subkeyword_id', subkeywordId);
+
+        const url =
+          '/api/documents/' +
+          encodeURIComponent(vectorStoreFileId) +
+          '/taxonomy' +
+          (params.toString() ? `?${params.toString()}` : '');
+
+        summaryEl.textContent = 'Loading taxonomy details…';
+        termsEl.innerHTML = '';
+
+        try {
+          const res = await fetch(url, { credentials: 'include' });
+          const json = await res.json();
+          if (!res.ok) {
+            summaryEl.textContent =
+              'Error loading taxonomy details: ' + (json.error || res.status);
+            return;
+          }
+
+          const terms = Array.isArray(json.terms) ? json.terms : [];
+
+          if (terms.length === 0) {
+            summaryEl.textContent =
+              'No taxonomy terms (with evidence) found for this document and filter.';
+            return;
+          }
+
+          const filters = [];
+          if (categoryId) filters.push(`Category = ${categoryId}`);
+          if (keywordId) filters.push(`Keyword = ${keywordId}`);
+          if (subkeywordId) filters.push(`Subkeyword = ${subkeywordId}`);
+
+          summaryEl.textContent =
+            `Document: ${vectorStoreFileId}` +
+            (filters.length ? ` | Filters: ${filters.join(', ')}` : '');
+
+          for (const term of terms) {
+            const div = document.createElement('div');
+            div.className = 'term';
+
+            const title = document.createElement('div');
+            title.className = 'term-title';
+            title.textContent = [
+              term.categoryLabel || term.categoryId || '(no category)',
+              term.keywordLabel || term.keywordId || '(no keyword)',
+              term.subkeywordLabel || term.subkeywordId || '',
+            ]
+              .filter(Boolean)
+              .join(' → ');
+            div.appendChild(title);
+
+            const meta = document.createElement('div');
+            meta.className = 'term-meta';
+            meta.textContent = [
+              term.categoryId ? `category_id=${term.categoryId}` : null,
+              term.keywordId ? `keyword_id=${term.keywordId}` : null,
+              term.subkeywordId ? `subkeyword_id=${term.subkeywordId}` : null,
+            ]
+              .filter(Boolean)
+              .join(' | ');
+            div.appendChild(meta);
+
+            const evidence = Array.isArray(term.evidence) ? term.evidence : [];
+            if (evidence.length > 0) {
+              const ul = document.createElement('ul');
+              ul.className = 'evidence-list';
+              for (const ev of evidence) {
+                const li = document.createElement('li');
+                const typePrefix = ev.evidenceType
+                  ? `[${ev.evidenceType}] `
+                  : '';
+                li.textContent = typePrefix + ev.evidenceText;
+                ul.appendChild(li);
+              }
+              div.appendChild(ul);
+            }
+
+            termsEl.appendChild(div);
+          }
+        } catch (err) {
+          summaryEl.textContent =
+            'Unexpected error loading taxonomy details. See console for details.';
+          console.error(err);
+        }
+      }
+
+      void loadDetails();
+    </script>
+  </body>
+  </html>
+

@@ -2,7 +2,6 @@ export const DOCUMENT_TYPES = [
   'unclassified',
   'office_visit',
   'telehealth_visit',
-  'telephone_visit',
   'telephone_encounter',
   'medication_refill',
   'imaging_report',

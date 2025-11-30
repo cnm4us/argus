@@ -40,19 +40,31 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
 
     const [taxonomyKeywordRows] = (await db.query(
       `
-        SELECT id, category_id, label
-        FROM taxonomy_keywords
-        WHERE status IN ('approved','review')
-        ORDER BY label ASC
+        SELECT k.id, k.category_id, k.label
+        FROM taxonomy_keywords k
+        WHERE
+          k.status IN ('approved','review')
+          AND EXISTS (
+            SELECT 1
+            FROM document_terms dt
+            WHERE dt.keyword_id = k.id
+          )
+        ORDER BY k.label ASC
       `,
     )) as any[];
 
     const [taxonomySubkeywordRows] = (await db.query(
       `
-        SELECT id, keyword_id, label
-        FROM taxonomy_subkeywords
-        WHERE status IN ('approved','review')
-        ORDER BY label ASC
+        SELECT s.id, s.keyword_id, s.label
+        FROM taxonomy_subkeywords s
+        WHERE
+          s.status IN ('approved','review')
+          AND EXISTS (
+            SELECT 1
+            FROM document_terms dt
+            WHERE dt.subkeyword_id = s.id
+          )
+        ORDER BY s.label ASC
       `,
     )) as any[];
 

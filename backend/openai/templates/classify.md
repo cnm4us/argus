@@ -16,7 +16,6 @@ Choose the best match from this list:
 
 - `office_visit`
 - `telehealth_visit`
-- `telephone_visit`
 - `telephone_encounter`
 - `medication_refill`
 - `imaging_report`
@@ -53,4 +52,3 @@ Return a single JSON object with this shape:
   - Values below 0.6 mean low confidence and should usually go with `"unclassified"` unless the type is still obvious.
 - `raw_label`: any label or phrasing the document itself uses for the note type (e.g. `"Telemedicine Visit"`, `"Office Visit"`, `"Telephone Encounter"`). Use `""` if not present.
 - `reason`: one short sentence explaining why you chose this type.
-

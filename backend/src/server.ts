@@ -6,6 +6,7 @@ import { config } from './config';
 import { requireAuth } from './middleware/auth';
 import { openai } from './openaiClient';
 import adminRouter from './routes/admin';
+import adminModulesRouter from './routes/adminModules';
 import documentsRouter from './routes/documents';
 import templatesRouter from './routes/templates';
 import searchRouter from './routes/search';
@@ -101,6 +102,7 @@ app.get('/api/openai/health', requireAuth, async (_req, res) => {
 
 // Admin routes (e.g., vector store init).
 app.use('/api/admin', adminRouter);
+app.use('/api/admin', adminModulesRouter);
 
 // Document upload and (later) metadata routes.
 app.use('/api/documents', documentsRouter);

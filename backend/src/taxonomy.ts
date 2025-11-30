@@ -238,3 +238,39 @@ export async function insertDocumentTerm(opts: {
     [opts.documentId, keywordId, subkeywordId],
   );
 }
+
+export async function insertDocumentTermEvidence(opts: {
+  documentId: number;
+  keywordId?: string | null;
+  subkeywordId?: string | null;
+  evidenceType?: string | null;
+  evidenceText?: string | null;
+  connection?: mysql.Pool | mysql.Connection;
+}): Promise<void> {
+  const db = opts.connection ?? (await getDb());
+  const keywordId = opts.keywordId ?? null;
+  const subkeywordId = opts.subkeywordId ?? null;
+  const evidenceType = opts.evidenceType ?? null;
+  const evidenceText = opts.evidenceText ?? null;
+
+  if (!keywordId && !subkeywordId) {
+    return;
+  }
+
+  if (!evidenceText || evidenceText.trim().length === 0) {
+    return;
+  }
+
+  await db.query(
+    `
+      INSERT INTO document_term_evidence (
+        document_id,
+        keyword_id,
+        subkeyword_id,
+        evidence_type,
+        evidence_text
+      ) VALUES (?, ?, ?, ?, ?)
+    `,
+    [opts.documentId, keywordId, subkeywordId, evidenceType, evidenceText],
+  );
+}

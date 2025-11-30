@@ -326,6 +326,21 @@ export async function initDb(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `;
 
+  const createDocumentTermEvidenceTableSQL = `
+    CREATE TABLE IF NOT EXISTS document_term_evidence (
+      id             INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      document_id    INT UNSIGNED NOT NULL,
+      keyword_id     VARCHAR(128) NULL,
+      subkeyword_id  VARCHAR(160) NULL,
+      evidence_type  VARCHAR(32) NULL,
+      evidence_text  TEXT NULL,
+      created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_doc_evidence_doc (document_id),
+      KEY idx_doc_evidence_keyword (keyword_id),
+      KEY idx_doc_evidence_subkeyword (subkeyword_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
   await db.query(createDocumentVitalsTableSQL);
   await db.query(createDocumentSmokingTableSQL);
   await db.query(createDocumentMentalHealthTableSQL);
@@ -337,6 +352,7 @@ export async function initDb(): Promise<void> {
   await db.query(createTaxonomyKeywordsTableSQL);
   await db.query(createTaxonomySubkeywordsTableSQL);
   await db.query(createDocumentTermsTableSQL);
+  await db.query(createDocumentTermEvidenceTableSQL);
 
   // Seed initial taxonomy categories (idempotent).
   await db.query(
@@ -350,7 +366,8 @@ export async function initDb(): Promise<void> {
         ('appointments', 'Appointments', 'Scheduling, missed visits, cancellations, and rescheduling.'),
         ('vitals', 'Vitals', 'Vital sign measurements and patterns (SpO2, BP, HR, RR, temperature, weight/BMI).'),
         ('smoking', 'Smoking', 'Tobacco history, pack-years, and cessation counseling.'),
-        ('mental_health', 'Mental Health', 'Mental health symptoms, diagnoses, and observed behaviors.')
+        ('mental_health', 'Mental Health', 'Mental health symptoms, diagnoses, and observed behaviors.'),
+        ('sexual_history', 'Sexual History', 'Sexual history, sexual activity, STI risk factors, and indications for STI screening.')
     `,
   );
 
@@ -375,7 +392,10 @@ export async function initDb(): Promise<void> {
         ('mental_health.any_mention', 'mental_health', 'Any mental health mention', JSON_ARRAY('mental health', 'psychiatric', 'psych'), 'Document contains mental health content (symptoms, diagnoses, or behaviors).', 'approved'),
         ('mental_health.anxiety', 'mental_health', 'Anxiety', JSON_ARRAY('anxiety', 'anxious'), 'Symptoms or diagnosis related to anxiety.', 'approved'),
         ('mental_health.depression', 'mental_health', 'Depression', JSON_ARRAY('depression', 'depressed', 'major depressive disorder'), 'Symptoms or diagnosis related to depression.', 'approved'),
-        ('mental_health.substance_use_disorder', 'mental_health', 'Substance use disorder', JSON_ARRAY('substance use disorder', 'alcohol use disorder', 'drug dependence'), 'Diagnosis related to substance or alcohol use disorder.', 'approved')
+        ('mental_health.substance_use_disorder', 'mental_health', 'Substance use disorder', JSON_ARRAY('substance use disorder', 'alcohol use disorder', 'drug dependence'), 'Diagnosis related to substance or alcohol use disorder.', 'approved'),
+        -- Sexual history
+        ('sexual_history.any_mention', 'sexual_history', 'Any sexual history mention', JSON_ARRAY('sexual history', 'sexual activity', 'sexually active', 'sexual risk', 'sexual behavior'), 'Document contains any sexual history, sexual activity, or STI risk discussion (including positive or negative history).', 'approved'),
+        ('sexual_history.risky_behavior', 'sexual_history', 'Risky sexual behavior', JSON_ARRAY('risky sexual behavior', 'high-risk sexual behavior', 'unprotected sex', 'no condom use', 'condoms never', 'multiple partners', 'new sexual partner', 'new partner', 'sex work', 'transactional sex', 'partner with sti', 'partner has sti', 'partner hiv positive', 'partner with hiv'), 'Document describes sexual behavior or history that increases STI risk or indicates need for STI screening.', 'approved')
     `,
   );
 

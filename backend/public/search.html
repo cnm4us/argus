@@ -168,7 +168,6 @@
             <option value="unclassified">unclassified</option>
             <option value="office_visit">office_visit</option>
             <option value="telehealth_visit">telehealth_visit</option>
-            <option value="telephone_visit">telephone_visit</option>
             <option value="telephone_encounter">telephone_encounter</option>
             <option value="medication_refill">medication_refill</option>
             <option value="imaging_report">imaging_report</option>
@@ -246,6 +245,7 @@
           <tr>
             <th class="sortable date-col" data-sort-key="date">Date</th>
             <th class="sortable" data-sort-key="filename">File Name</th>
+            <th>Details</th>
             <th class="sortable" data-sort-key="providerName">Provider</th>
             <th class="sortable" data-sort-key="clinicOrFacility">
               Clinic / Facility
@@ -278,6 +278,9 @@
       let taxonomyCategories = [];
       let taxonomyKeywords = [];
       let taxonomySubkeywords = [];
+      let lastTaxonomyCategoryId = '';
+      let lastTaxonomyKeywordId = '';
+      let lastTaxonomySubkeywordId = '';
 
       async function loadOptions() {
         try {
@@ -446,6 +449,21 @@
           fileTd.appendChild(link);
           tr.appendChild(fileTd);
 
+          const detailsTd = document.createElement('td');
+          const detailsLink = document.createElement('a');
+          const categoryId = lastTaxonomyCategoryId || '';
+          const keywordId = lastTaxonomyKeywordId || '';
+          const subkeywordId = lastTaxonomySubkeywordId || '';
+          const params = new URLSearchParams();
+          params.set('id', item.id);
+          if (categoryId) params.set('category_id', categoryId);
+          if (keywordId) params.set('keyword_id', keywordId);
+          if (subkeywordId) params.set('subkeyword_id', subkeywordId);
+          detailsLink.href = `/taxonomy-details.html?${params.toString()}`;
+          detailsLink.textContent = 'Details';
+          detailsTd.appendChild(detailsLink);
+          tr.appendChild(detailsTd);
+
           const providerTd = document.createElement('td');
           providerTd.textContent = item.providerName || '';
           tr.appendChild(providerTd);
@@ -479,6 +497,10 @@
         const taxonomyCategoryId = taxonomyCategorySelect
           ? taxonomyCategorySelect.value
           : '';
+
+        lastTaxonomyCategoryId = taxonomyCategoryId || '';
+        lastTaxonomyKeywordId = taxonomyKeywordId || '';
+        lastTaxonomySubkeywordId = taxonomySubkeywordId || '';
         if (documentType) params.set('document_type', documentType);
         if (providerName) params.set('provider_name', providerName);
         if (clinicOrFacility)

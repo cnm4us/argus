@@ -21,7 +21,13 @@ import { getDb } from '../db';
 import { uploadPdfToS3, deleteObjectFromS3 } from '../s3Client';
 import { logOpenAI } from '../logger';
 import { updateDocumentProjectionsForVectorStoreFile } from '../metadataProjections';
-import { loadTaxonomy, insertKeyword, insertSubkeyword, insertDocumentTerm } from '../taxonomy';
+import {
+  loadTaxonomy,
+  insertKeyword,
+  insertSubkeyword,
+  insertDocumentTerm,
+  insertDocumentTermEvidence,
+} from '../taxonomy';
 
 const router = express.Router();
 
@@ -34,125 +40,6 @@ const upload = multer({
 
 function isValidDocumentType(value: string): value is DocumentType {
   return (DOCUMENT_TYPES as readonly string[]).includes(value);
-}
-
-async function extractMetadata(
-  documentType: DocumentType,
-  fileId: string,
-  fileName: string,
-): Promise<DocumentMetadata | null> {
-  const maxAttempts =
-    config.metadataRetryMaxAttempts > 0 ? config.metadataRetryMaxAttempts : 3;
-  const baseDelaySeconds =
-    config.metadataRetryBaseDelaySeconds > 0
-      ? config.metadataRetryBaseDelaySeconds
-      : 4;
-  const baseDelayMs = baseDelaySeconds * 1000;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      logOpenAI('extractMetadata:start', {
-        documentType,
-        fileId,
-        fileName,
-        attempt,
-      });
-
-      const template = await loadTemplateForDocumentType(documentType);
-
-      const response = await openai.responses.create({
-        model: 'gpt-4.1',
-        instructions: template,
-        input: [
-          {
-            role: 'user',
-            type: 'message',
-            content: [
-              {
-                type: 'input_text',
-                text: 'Use the provided instructions and this document to produce the requested JSON metadata.',
-              },
-              {
-                type: 'input_file',
-                file_id: fileId,
-              },
-            ],
-          },
-        ],
-        text: {
-          format: { type: 'json_object' },
-        },
-      });
-
-      const rawText =
-        ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
-        ((response as any).output_text as string | undefined);
-
-      if (!rawText) {
-        console.warn('Metadata extraction: no text output from model');
-        return null;
-      }
-
-      const parsed = JSON.parse(rawText) as DocumentMetadata;
-
-      // Ensure some fields are filled from known context if missing.
-      if (!parsed.document_type) {
-        parsed.document_type = documentType;
-      }
-      if (!parsed.file_id) {
-        parsed.file_id = fileId;
-      }
-      if (!parsed.file_name) {
-        parsed.file_name = fileName;
-      }
-
-      logOpenAI('extractMetadata:success', {
-        documentType,
-        fileId,
-        fileName,
-        attempt,
-      });
-
-      return parsed;
-    } catch (error) {
-      const status = (error as any)?.status;
-      const message =
-        error instanceof Error ? error.message : String(error ?? '');
-
-      logOpenAI('extractMetadata:error', {
-        documentType,
-        fileId,
-        fileName,
-        attempt,
-        status,
-        error:
-          error instanceof Error
-            ? { message: error.message, stack: error.stack }
-            : error,
-      });
-
-      if (status === 429) {
-        console.error(
-          '[OpenAI rate limit] extractMetadata received 429 for',
-          fileName,
-          'documentType=',
-          documentType,
-        );
-      }
-
-      // Simple retry for OpenAI rate limits (429).
-      if (status === 429 && attempt < maxAttempts) {
-        const delay = baseDelayMs * attempt;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        continue;
-      }
-
-      console.error('Metadata extraction failed:', error);
-      return null;
-    }
-  }
-
-  return null;
 }
 
 async function extractMetadataFromMarkdown(
@@ -401,6 +288,7 @@ interface TaxonomySubkeywordMatch {
     label?: string | null;
     synonyms?: string[] | null;
   } | null;
+  subkeyword_evidence?: string | null;
 }
 
 interface TaxonomyKeywordMatch {
@@ -409,6 +297,7 @@ interface TaxonomyKeywordMatch {
     label?: string | null;
     synonyms?: string[] | null;
   } | null;
+  keyword_evidence?: string | null;
   subkeyword_matches?: TaxonomySubkeywordMatch[] | null;
 }
 
@@ -428,10 +317,11 @@ function slugifyLabel(label: string): string {
     .replace(/^_+|_+$/g, '');
 }
 
-async function runTaxonomyExtractionForDocument(
+export async function runTaxonomyExtractionForDocument(
   documentId: number,
   markdown: string | null,
   fileName: string,
+  categoryFilterId?: string,
 ): Promise<void> {
   try {
     if (!markdown || markdown.trim().length === 0) {
@@ -446,6 +336,9 @@ async function runTaxonomyExtractionForDocument(
     const categoriesOverview = taxonomy.categories.map((c) => c.label);
 
     for (const category of taxonomy.categories) {
+      if (categoryFilterId && category.id !== categoryFilterId) {
+        continue;
+      }
       try {
         const systemPrompt =
           'You are a medical-legal taxonomy assistant. ' +
@@ -481,7 +374,8 @@ async function runTaxonomyExtractionForDocument(
           '   - If not, should a NEW keyword be created? If yes, provide new_keyword.label and new_keyword.synonyms.\n' +
           '3) For each keyword (existing or new) that applies:\n' +
           '   - Choose any applicable existing subkeywords.\n' +
-          '   - Optionally define new subkeywords with label and synonyms.\n\n' +
+          '   - Optionally define new subkeywords with label and synonyms.\n' +
+          '4) For each keyword and subkeyword you include, provide a short evidence string quoting or closely paraphrasing the specific text that supports this classification. Use the fields keyword_evidence and subkeyword_evidence.\n\n' +
           'IMPORTANT CONSTRAINTS:\n' +
           '- Do NOT invent new categories.\n' +
           '- A given synonym string should belong to at most one keyword across the taxonomy.\n' +
@@ -494,10 +388,12 @@ async function runTaxonomyExtractionForDocument(
           '    {\n' +
           '      "keyword_id": string | null,\n' +
           '      "new_keyword": { "label": string | null, "synonyms": string[] } | null,\n' +
+          '      "keyword_evidence": string | null,\n' +
           '      "subkeyword_matches": [\n' +
           '        {\n' +
           '          "subkeyword_id": string | null,\n' +
-          '          "new_subkeyword": { "label": string | null, "synonyms": string[] } | null\n' +
+          '          "new_subkeyword": { "label": string | null, "synonyms": string[] } | null,\n' +
+          '          "subkeyword_evidence": string | null\n' +
           '        }\n' +
           '      ]\n' +
           '    }\n' +
@@ -578,6 +474,11 @@ async function runTaxonomyExtractionForDocument(
 
         for (const match of matches) {
           let keywordId = (match.keyword_id ?? '').trim() || null;
+          const keywordEvidenceRaw = (match as any).keyword_evidence;
+          const keywordEvidence =
+            typeof keywordEvidenceRaw === 'string'
+              ? keywordEvidenceRaw.trim()
+              : '';
 
           if (!keywordId && match.new_keyword) {
             const label = (match.new_keyword.label ?? '').trim();
@@ -602,6 +503,28 @@ async function runTaxonomyExtractionForDocument(
             }
           }
 
+          // If the model referenced a keyword_id that does not yet exist and did not
+          // provide new_keyword metadata, create a placeholder keyword so that any
+          // new subkeywords can attach without violating foreign key constraints.
+          if (keywordId && !match.new_keyword) {
+            const existing = category.keywords.find((kw) => kw.id === keywordId);
+            if (!existing) {
+              const derivedLabelPart = keywordId.includes('.')
+                ? keywordId.split('.').slice(1).join('.')
+                : keywordId;
+              const derivedLabel = derivedLabelPart.replace(/_/g, ' ');
+
+              await insertKeyword({
+                categoryId: category.id,
+                id: keywordId,
+                label: derivedLabel,
+                synonyms: [derivedLabel],
+                status: 'review',
+                connection: db,
+              });
+            }
+          }
+
           if (!keywordId) {
             continue;
           }
@@ -614,6 +537,17 @@ async function runTaxonomyExtractionForDocument(
             connection: db,
           });
 
+          if (keywordEvidence) {
+            await insertDocumentTermEvidence({
+              connection: db,
+              documentId,
+              keywordId,
+              subkeywordId: null,
+              evidenceType: 'snippet',
+              evidenceText: keywordEvidence,
+            });
+          }
+
           const subMatches = match.subkeyword_matches ?? [];
           if (!Array.isArray(subMatches) || subMatches.length === 0) {
             continue;
@@ -621,6 +555,9 @@ async function runTaxonomyExtractionForDocument(
 
           for (const sm of subMatches) {
             let subkeywordId = (sm.subkeyword_id ?? '').trim() || null;
+            const subEvidenceRaw = (sm as any).subkeyword_evidence;
+            const subEvidence =
+              typeof subEvidenceRaw === 'string' ? subEvidenceRaw.trim() : '';
 
             if (!subkeywordId && sm.new_subkeyword) {
               const skLabel = (sm.new_subkeyword.label ?? '').trim();
@@ -655,6 +592,17 @@ async function runTaxonomyExtractionForDocument(
               subkeywordId,
               connection: db,
             });
+
+            if (subEvidence) {
+              await insertDocumentTermEvidence({
+                connection: db,
+                documentId,
+                keywordId,
+                subkeywordId,
+                evidenceType: 'snippet',
+                evidenceText: subEvidence,
+              });
+            }
           }
         }
 
@@ -720,128 +668,6 @@ async function runWithMetadataConcurrency<T>(fn: () => Promise<T>): Promise<T> {
       metadataJobQueue.push(run);
     }
   });
-}
-
-async function classifyDocument(
-  fileId: string,
-  fileName: string,
-): Promise<ClassificationResult | null> {
-  try {
-    logOpenAI('classify:start', {
-      fileId,
-      fileName,
-    });
-
-    const template = await loadClassificationTemplate();
-
-    const response = await openai.responses.create({
-      model: 'gpt-4.1-mini',
-      instructions: template,
-      input: [
-        {
-          role: 'user',
-          type: 'message',
-          content: [
-            {
-              type: 'input_text',
-              text:
-                'Classify this document according to the provided schema and respond only with JSON that matches the specified JSON output format.',
-            },
-            {
-              type: 'input_file',
-              file_id: fileId,
-            },
-          ],
-        },
-      ],
-      text: {
-        format: { type: 'json_object' },
-      },
-    });
-
-    const rawText =
-      ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
-      ((response as any).output_text as string | undefined);
-
-    if (!rawText) {
-      logOpenAI('classify:error', {
-        fileId,
-        fileName,
-        error: { message: 'No text output from classification model' },
-      });
-      return null;
-    }
-
-    let parsed: any;
-    try {
-      parsed = JSON.parse(rawText);
-    } catch (err) {
-      logOpenAI('classify:error', {
-        fileId,
-        fileName,
-        error: {
-          message: 'Failed to parse classification JSON',
-          rawText: rawText.slice(0, 500),
-        },
-      });
-      return null;
-    }
-
-    const predictedTypeRaw = typeof parsed.predicted_type === 'string' ? parsed.predicted_type : '';
-    const confidenceRaw = parsed.confidence;
-    const rawLabel =
-      typeof parsed.raw_label === 'string' ? parsed.raw_label : undefined;
-
-    let confidence: number | null = null;
-    if (typeof confidenceRaw === 'number') {
-      confidence = confidenceRaw;
-    } else if (typeof confidenceRaw === 'string') {
-      const num = Number(confidenceRaw);
-      confidence = Number.isFinite(num) ? num : null;
-    }
-
-    let predictedType: DocumentType | 'unclassified' | null = null;
-    if (predictedTypeRaw === 'unclassified') {
-      predictedType = 'unclassified';
-    } else if (isValidDocumentType(predictedTypeRaw)) {
-      predictedType = predictedTypeRaw;
-    } else {
-      predictedType = null;
-    }
-
-    logOpenAI('classify:success', {
-      fileId,
-      fileName,
-      predictedType,
-      confidence,
-      rawLabel,
-    });
-
-    return {
-      predictedType,
-      confidence,
-      rawLabel,
-    };
-  } catch (error) {
-    logOpenAI('classify:error', {
-      status: (error as any)?.status,
-      fileId,
-      fileName,
-      error:
-        error instanceof Error
-          ? { message: error.message, stack: error.stack }
-          : error,
-    });
-
-    const status = (error as any)?.status;
-    if (status === 429) {
-      console.error(
-        '[OpenAI rate limit] classifyDocument received 429 for',
-        fileName,
-      );
-    }
-    return null;
-  }
 }
 
 async function classifyDocumentFromMarkdown(
@@ -958,114 +784,6 @@ async function classifyDocumentFromMarkdown(
   }
 }
 
-async function runSelectedModulesForFile(
-  fileId: string,
-  fileName: string,
-  selection: ModuleSelectionResult | null,
-): Promise<Record<string, any>> {
-  const results: Record<string, any> = {};
-
-  if (!selection || !Array.isArray(selection.modules) || selection.modules.length === 0) {
-    return results;
-  }
-
-  for (const moduleName of selection.modules) {
-    try {
-      logOpenAI('moduleExtract:start', {
-        fileId,
-        fileName,
-        module: moduleName,
-      });
-
-      const template = await loadModuleTemplate(moduleName);
-
-      const response = await openai.responses.create({
-        model: 'gpt-4.1',
-        instructions: template,
-        input: [
-          {
-            role: 'user',
-            type: 'message',
-            content: [
-              {
-                type: 'input_text',
-                text: 'Extract this module according to the instructions and output strict JSON only.',
-              },
-              {
-                type: 'input_file',
-                file_id: fileId,
-              },
-            ],
-          },
-        ],
-        text: {
-          format: { type: 'json_object' },
-        },
-      });
-
-      const rawText =
-        ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
-        ((response as any).output_text as string | undefined);
-
-      if (!rawText) {
-        logOpenAI('moduleExtract:error', {
-          fileId,
-          fileName,
-          module: moduleName,
-          error: { message: 'No text output from module extraction model' },
-        });
-        continue;
-      }
-
-      let parsed: any;
-      try {
-        parsed = JSON.parse(rawText);
-      } catch (err) {
-        logOpenAI('moduleExtract:error', {
-          fileId,
-          fileName,
-          module: moduleName,
-          error: {
-            message: 'Failed to parse module extraction JSON',
-            rawText: rawText.slice(0, 500),
-          },
-        });
-        continue;
-      }
-
-      results[moduleName] = parsed;
-
-      logOpenAI('moduleExtract:success', {
-        fileId,
-        fileName,
-        module: moduleName,
-      });
-    } catch (error) {
-      logOpenAI('moduleExtract:error', {
-        status: (error as any)?.status,
-        fileId,
-        fileName,
-        module: moduleName,
-        error:
-          error instanceof Error
-            ? { message: error.message, stack: error.stack }
-            : error,
-      });
-      const status = (error as any)?.status;
-      if (status === 429) {
-        console.error(
-          '[OpenAI rate limit] moduleExtract received 429 for',
-          fileName,
-          'module=',
-          moduleName,
-        );
-      }
-    }
-  }
-
-  return results;
-}
-
 async function runSelectedModulesForMarkdown(
   markdown: string,
   fileName: string,
@@ -1165,135 +883,6 @@ async function runSelectedModulesForMarkdown(
   }
 
   return results;
-}
-
-async function classifyHighLevelDocument(
-  fileId: string,
-  fileName: string,
-): Promise<HighLevelClassificationResult | null> {
-  try {
-    logOpenAI('highLevelClassify:start', {
-      fileId,
-      fileName,
-    });
-
-    const template = await loadHighLevelClassificationTemplate();
-
-    const response = await openai.responses.create({
-      model: 'gpt-4.1-mini',
-      instructions: template,
-      input: [
-        {
-          role: 'user',
-          type: 'message',
-          content: [
-            {
-              type: 'input_text',
-              text:
-                'Classify this document at a high level according to the provided schema and respond only with JSON that matches the specified JSON output format.',
-            },
-            {
-              type: 'input_file',
-              file_id: fileId,
-            },
-          ],
-        },
-      ],
-      text: {
-        format: { type: 'json_object' },
-      },
-    });
-
-    const rawText =
-      ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
-      ((response as any).output_text as string | undefined);
-
-    if (!rawText) {
-      logOpenAI('highLevelClassify:error', {
-        fileId,
-        fileName,
-        error: { message: 'No text output from high-level classification model' },
-      });
-      return null;
-    }
-
-    let parsed: any;
-    try {
-      parsed = JSON.parse(rawText);
-    } catch (err) {
-      logOpenAI('highLevelClassify:error', {
-        fileId,
-        fileName,
-        error: {
-          message: 'Failed to parse high-level classification JSON',
-          rawText: rawText.slice(0, 500),
-        },
-      });
-      return null;
-    }
-
-    const typeRaw = typeof parsed.type === 'string' ? parsed.type : '';
-    const allowedTypes: HighLevelType[] = [
-      'clinical_encounter',
-      'communication',
-      'result',
-      'referral',
-      'administrative',
-      'external_record',
-    ];
-
-    const type = allowedTypes.includes(typeRaw as HighLevelType)
-      ? (typeRaw as HighLevelType)
-      : null;
-
-    if (!type) {
-      logOpenAI('highLevelClassify:error', {
-        fileId,
-        fileName,
-        error: {
-          message: 'High-level classification returned invalid type',
-          rawType: typeRaw,
-        },
-      });
-      return null;
-    }
-
-    const confidenceRaw = parsed.confidence;
-    let confidence: number | null = null;
-    if (typeof confidenceRaw === 'number') {
-      confidence = confidenceRaw;
-    } else if (typeof confidenceRaw === 'string') {
-      const num = Number(confidenceRaw);
-      confidence = Number.isFinite(num) ? num : null;
-    }
-
-    logOpenAI('highLevelClassify:success', {
-      fileId,
-      fileName,
-      type,
-      confidence,
-    });
-
-    return { type, confidence };
-  } catch (error) {
-    logOpenAI('highLevelClassify:error', {
-      status: (error as any)?.status,
-      fileId,
-      fileName,
-      error:
-        error instanceof Error
-          ? { message: error.message, stack: error.stack }
-          : error,
-    });
-    const status = (error as any)?.status;
-    if (status === 429) {
-      console.error(
-        '[OpenAI rate limit] highLevelClassify received 429 for',
-        fileName,
-      );
-    }
-    return null;
-  }
 }
 
 async function classifyHighLevelDocumentFromMarkdown(
@@ -1410,126 +999,6 @@ async function classifyHighLevelDocumentFromMarkdown(
     if (status === 429) {
       console.error(
         '[OpenAI rate limit] highLevelClassifyFromMarkdown received 429 for',
-        fileName,
-      );
-    }
-    return null;
-  }
-}
-
-async function selectModulesForFile(
-  fileId: string,
-  fileName: string,
-  highLevelType: HighLevelType | null,
-): Promise<ModuleSelectionResult | null> {
-  try {
-    logOpenAI('moduleSelection:start', {
-      fileId,
-      fileName,
-      highLevelType,
-    });
-
-    const template = await loadModuleSelectionTemplate();
-
-    const documentTypeHint =
-      highLevelType && typeof highLevelType === 'string'
-        ? highLevelType
-        : 'unknown';
-
-    const response = await openai.responses.create({
-      model: 'gpt-4.1-mini',
-      instructions: template,
-      input: [
-        {
-          role: 'user',
-          type: 'message',
-          content: [
-            {
-              type: 'input_text',
-              text:
-                `The high-level document.type from a previous step is "${documentTypeHint}". ` +
-                'Use it only as a hint; it may be incorrect. Based on this and the document text, select all applicable modules and respond ONLY with valid JSON matching the specified JSON output format.',
-            },
-            {
-              type: 'input_file',
-              file_id: fileId,
-            },
-          ],
-        },
-      ],
-      text: {
-        format: { type: 'json_object' },
-      },
-    });
-
-    const rawText =
-      ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
-      ((response as any).output_text as string | undefined);
-
-    if (!rawText) {
-      logOpenAI('moduleSelection:error', {
-        fileId,
-        fileName,
-        error: { message: 'No text output from module selection model' },
-      });
-      return null;
-    }
-
-    let parsed: any;
-    try {
-      parsed = JSON.parse(rawText);
-    } catch (err) {
-      logOpenAI('moduleSelection:error', {
-        fileId,
-        fileName,
-        error: {
-          message: 'Failed to parse module selection JSON',
-          rawText: rawText.slice(0, 500),
-        },
-      });
-      return null;
-    }
-
-    const rawModules = Array.isArray(parsed.modules) ? parsed.modules : [];
-    const allowed: ModuleName[] = [
-      'provider',
-      'patient',
-      'reason_for_encounter',
-      'vitals',
-      'smoking',
-      'sexual_health',
-      'mental_health',
-      'referral',
-      'results',
-      'communication',
-    ];
-
-    const modules: ModuleName[] = rawModules
-      .map((m: any) => (typeof m === 'string' ? m.trim() : ''))
-      .filter((m: string) => allowed.includes(m as ModuleName)) as ModuleName[];
-
-    logOpenAI('moduleSelection:success', {
-      fileId,
-      fileName,
-      highLevelType,
-      modules,
-    });
-
-    return { modules };
-  } catch (error) {
-    logOpenAI('moduleSelection:error', {
-      status: (error as any)?.status,
-      fileId,
-      fileName,
-      error:
-        error instanceof Error
-          ? { message: error.message, stack: error.stack }
-          : error,
-    });
-    const status = (error as any)?.status;
-    if (status === 429) {
-      console.error(
-        '[OpenAI rate limit] moduleSelection received 429 for',
         fileName,
       );
     }
@@ -1900,6 +1369,18 @@ router.post(
         (async () => {
           try {
             await runWithMetadataConcurrency(async () => {
+              const markdownText = (markdown ?? '').trim();
+
+              if (!markdownText) {
+                logOpenAI('backgroundMetadata:skip', {
+                  reason: 'no_markdown_available',
+                  fileId: file.id,
+                  fileName: originalname,
+                  vectorStoreFileId: vectorStoreFile.id,
+                });
+                return;
+              }
+
             // If a specific document type was provided, skip classification and
             // run background metadata extraction as before.
             if (effectiveDocumentType !== 'unclassified') {
@@ -1910,9 +1391,9 @@ router.post(
                 vectorStoreFileId: vectorStoreFile.id,
               });
 
-              const bgMetadata = await extractMetadata(
+              const bgMetadata = await extractMetadataFromMarkdown(
                 effectiveDocumentType,
-                file.id,
+                markdownText,
                 originalname,
               );
 
@@ -1928,17 +1409,20 @@ router.post(
               }
 
               const highLevelClassification =
-                await classifyHighLevelDocument(file.id, originalname);
-              const moduleSelection = await selectModulesForFile(
-                file.id,
+                await classifyHighLevelDocumentFromMarkdown(
+                  markdownText,
+                  originalname,
+                );
+              const moduleSelection = await selectModulesForMarkdown(
+                markdownText,
                 originalname,
                 highLevelClassification ? highLevelClassification.type : null,
               );
 
               let moduleOutputs: Record<string, any> = {};
               if (moduleSelection) {
-                moduleOutputs = await runSelectedModulesForFile(
-                  file.id,
+                moduleOutputs = await runSelectedModulesForMarkdown(
+                  markdownText,
                   originalname,
                   moduleSelection,
                 );
@@ -2063,8 +1547,8 @@ router.post(
               vectorStoreFileId: vectorStoreFile.id,
             });
 
-            const classification = await classifyDocument(
-              file.id,
+            const classification = await classifyDocumentFromMarkdown(
+              markdownText,
               originalname,
             );
             if (!classification) {
@@ -2190,9 +1674,9 @@ router.post(
               vectorStoreFileId: vectorStoreFile.id,
             });
 
-            const autoMetadata = await extractMetadata(
+            const autoMetadata = await extractMetadataFromMarkdown(
               classifiedType,
-              file.id,
+              markdownText,
               originalname,
             );
 
@@ -2207,20 +1691,21 @@ router.post(
               return;
             }
 
-            const highLevelClassification = await classifyHighLevelDocument(
-              file.id,
-              originalname,
-            );
-            const moduleSelection = await selectModulesForFile(
-              file.id,
+            const highLevelClassification =
+              await classifyHighLevelDocumentFromMarkdown(
+                markdownText,
+                originalname,
+              );
+            const moduleSelection = await selectModulesForMarkdown(
+              markdownText,
               originalname,
               highLevelClassification ? highLevelClassification.type : null,
             );
 
             let moduleOutputs: Record<string, any> = {};
             if (moduleSelection) {
-              moduleOutputs = await runSelectedModulesForFile(
-                file.id,
+              moduleOutputs = await runSelectedModulesForMarkdown(
+                markdownText,
                 originalname,
                 moduleSelection,
               );
@@ -2870,44 +2355,192 @@ router.get(
   },
 );
 
-// GET /api/documents/:id/metadata
-// Run metadata extraction on demand for a given vector store file and persist it.
-router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => {
+// GET /api/documents/:id/taxonomy
+// Return taxonomy terms (category/keyword/subkeyword) and any stored evidence for a given document.
+router.get('/:id/taxonomy', requireAuth, async (req: Request, res: Response) => {
   try {
-    if (!config.vectorStoreId) {
-      res.status(500).json({ error: 'ARGUS_VECTOR_STORE_ID not configured' });
-      return;
-    }
-
     const { id } = req.params;
-
-    const file = await openai.vectorStores.files.retrieve(id, {
-      vector_store_id: config.vectorStoreId,
-    });
-
-    const attributes = (file.attributes ?? {}) as {
-      [key: string]: string | number | boolean;
+    const { category_id, keyword_id, subkeyword_id } = req.query as {
+      category_id?: string;
+      keyword_id?: string;
+      subkeyword_id?: string;
     };
 
-    const documentTypeRaw = attributes.document_type;
-    const fileIdRaw = attributes.file_id;
-    const fileNameRaw = attributes.file_name;
+    const db = await getDb();
+    const [docRows] = (await db.query(
+      `
+        SELECT id
+        FROM documents
+        WHERE vector_store_file_id = ?
+        LIMIT 1
+      `,
+      [id],
+    )) as any[];
 
-    if (typeof documentTypeRaw !== 'string' || !isValidDocumentType(documentTypeRaw)) {
-      res.status(400).json({ error: 'Missing or invalid document_type on vector store file' });
+    if (!Array.isArray(docRows) || docRows.length === 0) {
+      res.status(404).json({ error: 'Document not found in DB' });
       return;
     }
-    if (typeof fileIdRaw !== 'string') {
-      res.status(400).json({ error: 'Missing file_id attribute on vector store file' });
+
+    const documentId = (docRows[0] as any).id as number;
+
+    const where: string[] = ['dt.document_id = ?'];
+    const params: any[] = [documentId];
+
+    if (category_id && category_id.trim() !== '') {
+      where.push('tc.id = ?');
+      params.push(category_id.trim());
+    }
+    if (keyword_id && keyword_id.trim() !== '') {
+      where.push('dt.keyword_id = ?');
+      params.push(keyword_id.trim());
+    }
+    if (subkeyword_id && subkeyword_id.trim() !== '') {
+      where.push('dt.subkeyword_id = ?');
+      params.push(subkeyword_id.trim());
+    }
+
+    const [termRows] = (await db.query(
+      `
+        SELECT
+          dt.keyword_id,
+          dt.subkeyword_id,
+          tc.id AS category_id,
+          tc.label AS category_label,
+          tk.label AS keyword_label,
+          ts.label AS subkeyword_label
+        FROM document_terms dt
+        LEFT JOIN taxonomy_keywords tk ON tk.id = dt.keyword_id
+        LEFT JOIN taxonomy_categories tc ON tc.id = tk.category_id
+        LEFT JOIN taxonomy_subkeywords ts ON ts.id = dt.subkeyword_id
+        WHERE ${where.join(' AND ')}
+      `,
+      params,
+    )) as any[];
+
+    const [evidenceRows] = (await db.query(
+      `
+        SELECT
+          keyword_id,
+          subkeyword_id,
+          evidence_type,
+          evidence_text
+        FROM document_term_evidence
+        WHERE document_id = ?
+      `,
+      [documentId],
+    )) as any[];
+
+    const evidenceByKey = new Map<
+      string,
+      { evidenceType: string | null; evidenceText: string }[]
+    >();
+
+    if (Array.isArray(evidenceRows)) {
+      for (const row of evidenceRows as any[]) {
+        const kId = (row.keyword_id as string | null) ?? '';
+        const skId = (row.subkeyword_id as string | null) ?? '';
+        const key = `${kId}::${skId}`;
+        const evidenceText =
+          typeof row.evidence_text === 'string'
+            ? (row.evidence_text as string)
+            : '';
+        if (!evidenceText) continue;
+        const evidenceType =
+          typeof row.evidence_type === 'string'
+            ? (row.evidence_type as string)
+            : null;
+        const list =
+          evidenceByKey.get(key) ??
+          ([] as { evidenceType: string | null; evidenceText: string }[]);
+        list.push({ evidenceType, evidenceText });
+        evidenceByKey.set(key, list);
+      }
+    }
+
+    const terms =
+      Array.isArray(termRows) && termRows.length > 0
+        ? (termRows as any[]).map((row) => {
+            const keywordId = (row.keyword_id as string | null) ?? null;
+            const subkeywordId = (row.subkeyword_id as string | null) ?? null;
+            const key = `${keywordId ?? ''}::${subkeywordId ?? ''}`;
+            const evidence = evidenceByKey.get(key) ?? [];
+
+            return {
+              categoryId: (row.category_id as string | null) ?? null,
+              categoryLabel: (row.category_label as string | null) ?? null,
+              keywordId,
+              keywordLabel: (row.keyword_label as string | null) ?? null,
+              subkeywordId,
+              subkeywordLabel: (row.subkeyword_label as string | null) ?? null,
+              evidence,
+            };
+          })
+        : [];
+
+    res.json({ terms });
+  } catch (error) {
+    console.error('Error in GET /api/documents/:id/taxonomy:', error);
+    res.status(500).json({ error: 'Failed to load taxonomy details' });
+  }
+});
+
+// GET /api/documents/:id/metadata
+// Run metadata extraction on demand for a given vector store file using Markdown stored in the DB.
+router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const db = await getDb();
+    const [rows] = (await db.query(
+      `
+        SELECT
+          vector_store_file_id,
+          openai_file_id,
+          filename,
+          document_type,
+          markdown,
+          s3_key
+        FROM documents
+        WHERE vector_store_file_id = ?
+        LIMIT 1
+      `,
+      [id],
+    )) as any[];
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      res.status(404).json({ error: 'Document not found in DB' });
+      return;
+    }
+
+    const row = rows[0] as {
+      vector_store_file_id: string;
+      openai_file_id: string | null;
+      filename: string | null;
+      document_type: string | null;
+      markdown: string | null;
+      s3_key: string | null;
+    };
+
+    const documentTypeRaw = row.document_type;
+    const fileName = row.filename || 'document.pdf';
+    const markdown = (row.markdown ?? '').trim();
+
+    if (typeof documentTypeRaw !== 'string' || !isValidDocumentType(documentTypeRaw)) {
+      res.status(400).json({ error: 'Missing or invalid document_type in DB for document' });
+      return;
+    }
+
+    if (!markdown) {
+      res.status(400).json({
+        error:
+          'Markdown content is not available for this document; please re-upload the PDF to regenerate metadata.',
+      });
       return;
     }
 
     const metadata = await runWithMetadataConcurrency(async () =>
-      extractMetadata(
-        documentTypeRaw,
-        fileIdRaw,
-        typeof fileNameRaw === 'string' ? fileNameRaw : 'document.pdf',
-      ),
+      extractMetadataFromMarkdown(documentTypeRaw as DocumentType, markdown, fileName),
     );
 
     if (!metadata) {
@@ -2915,45 +2548,22 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
       return;
     }
 
-    const highLevelClassification = await classifyHighLevelDocument(
-      fileIdRaw,
-      typeof fileNameRaw === 'string' ? fileNameRaw : 'document.pdf',
+    const highLevelClassification = await classifyHighLevelDocumentFromMarkdown(
+      markdown,
+      fileName,
     );
-    const moduleSelection = await selectModulesForFile(
-      fileIdRaw,
-      typeof fileNameRaw === 'string' ? fileNameRaw : 'document.pdf',
+    const moduleSelection = await selectModulesForMarkdown(
+      markdown,
+      fileName,
       highLevelClassification ? highLevelClassification.type : null,
     );
 
     let moduleOutputs: Record<string, any> = {};
     if (moduleSelection) {
-      moduleOutputs = await runSelectedModulesForFile(
-        fileIdRaw,
-        typeof fileNameRaw === 'string' ? fileNameRaw : 'document.pdf',
-        moduleSelection,
-      );
+      moduleOutputs = await runSelectedModulesForMarkdown(markdown, fileName, moduleSelection);
     }
 
-    // Update searchable attributes based on latest metadata.
-    const updatedAttributes: { [key: string]: string | number | boolean } = {
-      ...attributes,
-    };
-
-    if (metadata.date) updatedAttributes.date = metadata.date;
-    if (metadata.provider_name) updatedAttributes.provider_name = metadata.provider_name;
-    if (metadata.clinic_or_facility) {
-      updatedAttributes.clinic_or_facility = metadata.clinic_or_facility;
-    }
-    updatedAttributes.has_metadata = true;
-
-    await openai.vectorStores.files.update(id, {
-      vector_store_id: config.vectorStoreId,
-      attributes: updatedAttributes,
-    });
-
-    // Persist or update metadata snapshot in DB.
     try {
-      const db = await getDb();
       const dateValue = metadata.date ? metadata.date.slice(0, 10) : null;
 
       const metadataPayload: any = metadata;
@@ -2969,47 +2579,32 @@ router.get('/:id/metadata', requireAuth, async (req: Request, res: Response) => 
 
       await db.query(
         `
-        INSERT INTO documents (
-          vector_store_file_id,
-          openai_file_id,
-          s3_key,
-          filename,
-          document_type,
-          date,
-          provider_name,
-          clinic_or_facility,
-          is_active,
-          needs_metadata,
-          metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-          filename = VALUES(filename),
-          document_type = VALUES(document_type),
-          date = VALUES(date),
-          provider_name = VALUES(provider_name),
-          clinic_or_facility = VALUES(clinic_or_facility),
-          is_active = VALUES(is_active),
-          needs_metadata = VALUES(needs_metadata),
-          metadata_json = VALUES(metadata_json),
-          s3_key = VALUES(s3_key)
-      `,
+          UPDATE documents
+          SET
+            filename = ?,
+            document_type = ?,
+            date = ?,
+            provider_name = ?,
+            clinic_or_facility = ?,
+            is_active = 1,
+            needs_metadata = 0,
+            metadata_json = ?
+          WHERE vector_store_file_id = ?
+        `,
         [
-          id,
-          fileIdRaw,
-          attributes.s3_key ?? null,
-          typeof fileNameRaw === 'string' ? fileNameRaw : 'document.pdf',
+          fileName,
           documentTypeRaw,
           dateValue,
-          metadata.provider_name,
-          metadata.clinic_or_facility,
-          1,
-          0,
+          metadata.provider_name ?? null,
+          metadata.clinic_or_facility ?? null,
           JSON.stringify(metadataPayload),
+          id,
         ],
       );
+
       await updateDocumentProjectionsForVectorStoreFile(id, metadata);
     } catch (err) {
-      console.error('Failed to upsert document metadata in DB:', err);
+      console.error('Failed to update document metadata in DB:', err);
     }
 
     res.json({ metadata });
