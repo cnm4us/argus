@@ -235,15 +235,6 @@
         </div>
       </div>
 
-      <div class="filters-query">
-        <label for="query">Query</label>
-        <input
-          id="query"
-          type="text"
-          placeholder="e.g. referrals to pulmonology in 2023"
-        />
-      </div>
-
       <div class="controls">
         <button id="search-btn">Search</button>
       </div>
@@ -259,7 +250,6 @@
             <th class="sortable" data-sort-key="clinicOrFacility">
               Clinic / Facility
             </th>
-            <th class="sortable" data-sort-key="score">Score</th>
           </tr>
         </thead>
         <tbody id="results-body"></tbody>
@@ -274,7 +264,6 @@
       const dateToInput = document.getElementById('date_to');
       const providerSelect = document.getElementById('provider_name');
       const clinicSelect = document.getElementById('clinic_or_facility');
-      const queryInput = document.getElementById('query');
       const taxonomyCategorySelect =
         document.getElementById('taxonomy_category');
       const taxonomyKeywordSelect =
@@ -412,15 +401,6 @@
       function sortItems(items) {
         const sorted = [...items];
         sorted.sort((a, b) => {
-          if (currentSortKey === 'score') {
-            const sa =
-              typeof a.score === 'number' ? a.score : Number.NEGATIVE_INFINITY;
-            const sb =
-              typeof b.score === 'number' ? b.score : Number.NEGATIVE_INFINITY;
-            if (sa === sb) return 0;
-            return currentSortDir === 'asc' ? sa - sb : sb - sa;
-          }
-
           if (currentSortKey === 'date') {
             const da = a.date || '';
             const db = b.date || '';
@@ -474,17 +454,6 @@
           clinicTd.textContent = item.clinicOrFacility || '';
           tr.appendChild(clinicTd);
 
-          const scoreTd = document.createElement('td');
-          if (typeof item.score === 'number') {
-            const raw = item.score;
-            const clamped =
-              raw <= 1 && raw >= 0 ? raw : raw > 1 ? Math.min(raw / 100, 1) : 0;
-            scoreTd.textContent = (clamped * 100).toFixed(1) + '%';
-          } else {
-            scoreTd.textContent = '';
-          }
-          tr.appendChild(scoreTd);
-
           resultsBody.appendChild(tr);
         }
       }
@@ -494,7 +463,6 @@
         statusEl.className = 'status-line';
         searchBtn.disabled = true;
 
-        const query = queryInput.value.trim();
         const documentType = document.getElementById('document_type').value;
         const providerName = providerSelect.value.trim();
         const clinicOrFacility = clinicSelect.value.trim();
@@ -508,7 +476,6 @@
         const dateTo = dateToInput.value;
 
         const params = new URLSearchParams();
-        if (query) params.set('query', query);
         if (documentType) params.set('document_type', documentType);
         if (providerName) params.set('provider_name', providerName);
         if (clinicOrFacility)
@@ -573,12 +540,6 @@
 
       searchBtn.addEventListener('click', runSearch);
 
-      queryInput.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-          runSearch();
-        }
-      });
-
       const headerCells = document.querySelectorAll('thead th.sortable');
       headerCells.forEach((th) => {
         const key = th.getAttribute('data-sort-key');
@@ -588,10 +549,8 @@
             currentSortDir = currentSortDir === 'asc' ? 'desc' : 'asc';
           } else {
             currentSortKey = key;
-            currentSortDir = key === 'date' || key === 'filename' ? 'desc' : 'asc';
-            if (key === 'score') {
-              currentSortDir = 'desc';
-            }
+            currentSortDir =
+              key === 'date' || key === 'filename' ? 'desc' : 'asc';
           }
           renderResults(currentItems);
         });
