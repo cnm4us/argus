@@ -324,28 +324,46 @@ export async function initDb(): Promise<void> {
   await db.query(createTaxonomySubkeywordsTableSQL);
   await db.query(createDocumentTermsTableSQL);
 
-  // Seed initial taxonomy categories if none exist yet.
-  const [taxonomyCategoryRows] = (await db.query(
-    'SELECT COUNT(*) AS count FROM taxonomy_categories',
-  )) as any[];
-  const taxonomyCategoryCount =
-    Array.isArray(taxonomyCategoryRows) && taxonomyCategoryRows.length > 0
-      ? Number(taxonomyCategoryRows[0].count ?? 0)
-      : 0;
+  // Seed initial taxonomy categories (idempotent).
+  await db.query(
+    `
+      INSERT IGNORE INTO taxonomy_categories (id, label, description)
+      VALUES
+        ('respiratory', 'Respiratory', 'Respiratory status, oxygenation, COPD/emphysema, and related concepts.'),
+        ('results', 'Results', 'Lab and imaging results that impact follow-up and standard of care.'),
+        ('referrals', 'Referrals', 'Specialty referrals, referral reasons, and denials.'),
+        ('communication', 'Communication', 'Patient-provider communications, telephone encounters, and messaging.'),
+        ('appointments', 'Appointments', 'Scheduling, missed visits, cancellations, and rescheduling.'),
+        ('vitals', 'Vitals', 'Vital sign measurements and patterns (SpO2, BP, HR, RR, temperature, weight/BMI).'),
+        ('smoking', 'Smoking', 'Tobacco history, pack-years, and cessation counseling.'),
+        ('mental_health', 'Mental Health', 'Mental health symptoms, diagnoses, and observed behaviors.')
+    `,
+  );
 
-  if (!Number.isNaN(taxonomyCategoryCount) && taxonomyCategoryCount === 0) {
-    await db.query(
-      `
-        INSERT INTO taxonomy_categories (id, label, description)
-        VALUES
-          ('respiratory', 'Respiratory', 'Respiratory status, oxygenation, COPD/emphysema, and related concepts.'),
-          ('results', 'Results', 'Lab and imaging results that impact follow-up and standard of care.'),
-          ('referrals', 'Referrals', 'Specialty referrals, referral reasons, and denials.'),
-          ('communication', 'Communication', 'Patient-provider communications, telephone encounters, and messaging.'),
-          ('appointments', 'Appointments', 'Scheduling, missed visits, cancellations, and rescheduling.')
-      `,
-    );
-  }
+  // Seed a small set of core taxonomy keywords for vitals, smoking, and mental health.
+  await db.query(
+    `
+      INSERT IGNORE INTO taxonomy_keywords (id, category_id, label, synonyms_json, description, status)
+      VALUES
+        -- Vitals
+        ('vitals.any_mention', 'vitals', 'Any vitals mention', JSON_ARRAY('vitals', 'vital signs', 'vital sign'), 'Document contains any vital sign measurements.', 'approved'),
+        ('vitals.hypoxia', 'vitals', 'Hypoxia', JSON_ARRAY('hypoxia', 'low oxygen', 'low o2', 'desaturation'), 'Low oxygen saturation or hypoxia.', 'approved'),
+        ('vitals.hypotension', 'vitals', 'Hypotension', JSON_ARRAY('hypotension', 'low blood pressure'), 'Low blood pressure (e.g., SBP < 90 or DBP < 60).', 'approved'),
+        ('vitals.tachycardia', 'vitals', 'Tachycardia', JSON_ARRAY('tachycardia', 'fast heart rate'), 'High heart rate (e.g., HR >= 120).', 'approved'),
+        ('vitals.fever', 'vitals', 'Fever', JSON_ARRAY('fever', 'febrile'), 'Fever (e.g., temperature >= 100.4°F).', 'approved'),
+        -- Smoking
+        ('smoking.any_mention', 'smoking', 'Any smoking mention', JSON_ARRAY('smoking', 'tobacco', 'smoker'), 'Document contains any smoking or tobacco history.', 'approved'),
+        ('smoking.current_smoker', 'smoking', 'Current smoker', JSON_ARRAY('current smoker', 'smokes', 'active smoker'), 'Patient is documented as a current smoker.', 'approved'),
+        ('smoking.former_smoker', 'smoking', 'Former smoker', JSON_ARRAY('former smoker', 'quit smoking', 'ex-smoker'), 'Patient is documented as a former smoker.', 'approved'),
+        ('smoking.never_smoker', 'smoking', 'Never smoker', JSON_ARRAY('never smoker', 'denies smoking'), 'Patient is documented as a never smoker.', 'approved'),
+        ('smoking.cessation_counseling', 'smoking', 'Smoking cessation counseling', JSON_ARRAY('smoking cessation counseling', 'tobacco counseling'), 'Smoking cessation counseling, support, or referrals documented.', 'approved'),
+        -- Mental health
+        ('mental_health.any_mention', 'mental_health', 'Any mental health mention', JSON_ARRAY('mental health', 'psychiatric', 'psych'), 'Document contains mental health content (symptoms, diagnoses, or behaviors).', 'approved'),
+        ('mental_health.anxiety', 'mental_health', 'Anxiety', JSON_ARRAY('anxiety', 'anxious'), 'Symptoms or diagnosis related to anxiety.', 'approved'),
+        ('mental_health.depression', 'mental_health', 'Depression', JSON_ARRAY('depression', 'depressed', 'major depressive disorder'), 'Symptoms or diagnosis related to depression.', 'approved'),
+        ('mental_health.substance_use_disorder', 'mental_health', 'Substance use disorder', JSON_ARRAY('substance use disorder', 'alcohol use disorder', 'drug dependence'), 'Diagnosis related to substance or alcohol use disorder.', 'approved')
+    `,
+  );
 
   // Ensure document_communications enum columns include all expected values.
   try {

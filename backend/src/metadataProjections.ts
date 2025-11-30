@@ -1,5 +1,6 @@
 import type mysql from 'mysql2/promise';
 import { getDb } from './db';
+import { insertDocumentTerm } from './taxonomy';
 
 function normalizeDate(value: Date | string | null): string | null {
   if (!value) return null;
@@ -1062,6 +1063,239 @@ async function upsertDocumentCommunications(
   );
 }
 
+async function updateTaxonomyFromProjections(
+  db: mysql.Pool,
+  documentId: number,
+): Promise<void> {
+  // Vitals: tag any document that has any vitals.
+  try {
+    const [vRows] = (await db.query(
+      `
+        SELECT
+          has_vitals,
+          spo2_is_low,
+          blood_pressure_systolic,
+          blood_pressure_diastolic,
+          heart_rate,
+          temperature_f
+        FROM document_vitals
+        WHERE document_id = ?
+        LIMIT 1
+      `,
+      [documentId],
+    )) as any[];
+    if (Array.isArray(vRows) && vRows.length > 0) {
+      const v = vRows[0] as any;
+      if (v.has_vitals === 1) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'vitals.any_mention',
+        });
+      }
+      if (v.spo2_is_low === 1) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'vitals.hypoxia',
+        });
+      }
+
+      const sbp =
+        typeof v.blood_pressure_systolic === 'number'
+          ? (v.blood_pressure_systolic as number)
+          : null;
+      const dbp =
+        typeof v.blood_pressure_diastolic === 'number'
+          ? (v.blood_pressure_diastolic as number)
+          : null;
+      const hr =
+        typeof v.heart_rate === 'number' ? (v.heart_rate as number) : null;
+      const tempF =
+        typeof v.temperature_f === 'number' ? (v.temperature_f as number) : null;
+
+      const hasHypotension =
+        (sbp !== null && sbp < 90) || (dbp !== null && dbp < 60);
+      if (hasHypotension) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'vitals.hypotension',
+        });
+      }
+
+      if (hr !== null && hr >= 120) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'vitals.tachycardia',
+        });
+      }
+
+      if (tempF !== null && tempF >= 100.4) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'vitals.fever',
+        });
+      }
+    }
+  } catch {
+    // Best-effort; ignore taxonomy errors here.
+  }
+
+  // Smoking: tag any smoking mention and basic status/counseling.
+  try {
+    const [sRows] = (await db.query(
+      `
+        SELECT
+          patient_status,
+          provider_status,
+          has_smoking_history_documented,
+          has_cessation_counseling
+        FROM document_smoking
+        WHERE document_id = ?
+        LIMIT 1
+      `,
+      [documentId],
+    )) as any[];
+
+    if (Array.isArray(sRows) && sRows.length > 0) {
+      const s = sRows[0] as any;
+      const hasHistory =
+        s.has_smoking_history_documented === 1 ||
+        s.has_smoking_history_documented === true;
+      const hasCessation =
+        s.has_cessation_counseling === 1 || s.has_cessation_counseling === true;
+
+      const patientStatus =
+        typeof s.patient_status === 'string' && s.patient_status.length > 0
+          ? (s.patient_status as string)
+          : null;
+      const providerStatus =
+        typeof s.provider_status === 'string' && s.provider_status.length > 0
+          ? (s.provider_status as string)
+          : null;
+
+      const status = patientStatus ?? providerStatus ?? null;
+
+      if (hasHistory) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'smoking.any_mention',
+        });
+      }
+
+      if (status === 'current') {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'smoking.current_smoker',
+        });
+      } else if (status === 'former') {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'smoking.former_smoker',
+        });
+      } else if (status === 'never') {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'smoking.never_smoker',
+        });
+      }
+
+      if (hasCessation) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'smoking.cessation_counseling',
+        });
+      }
+    }
+  } catch {
+    // Ignore taxonomy errors; projections remain valid.
+  }
+
+  // Mental health: tag any mental health content and a few key diagnoses.
+  try {
+    const [mRows] = (await db.query(
+      `
+        SELECT
+          has_mental_health_content,
+          symptom_anxiety,
+          symptom_depression,
+          dx_anxiety_disorder,
+          dx_depressive_disorder,
+          dx_substance_use_disorder
+        FROM document_mental_health
+        WHERE document_id = ?
+        LIMIT 1
+      `,
+      [documentId],
+    )) as any[];
+
+    if (Array.isArray(mRows) && mRows.length > 0) {
+      const m = mRows[0] as any;
+      const hasContent =
+        m.has_mental_health_content === 1 ||
+        m.has_mental_health_content === true;
+
+      const hasAnxiety =
+        m.symptom_anxiety === 1 ||
+        m.symptom_anxiety === true ||
+        m.dx_anxiety_disorder === 1 ||
+        m.dx_anxiety_disorder === true;
+
+      const hasDepression =
+        m.symptom_depression === 1 ||
+        m.symptom_depression === true ||
+        m.dx_depressive_disorder === 1 ||
+        m.dx_depressive_disorder === true;
+
+      const hasSUD =
+        m.dx_substance_use_disorder === 1 ||
+        m.dx_substance_use_disorder === true;
+
+      if (hasContent) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'mental_health.any_mention',
+        });
+      }
+
+      if (hasAnxiety) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'mental_health.anxiety',
+        });
+      }
+
+      if (hasDepression) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'mental_health.depression',
+        });
+      }
+
+      if (hasSUD) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'mental_health.substance_use_disorder',
+        });
+      }
+    }
+  } catch {
+    // Ignore taxonomy errors; projections remain valid.
+  }
+}
+
 export async function updateDocumentProjectionsForVectorStoreFile(
   vectorStoreFileId: string,
   _metadata: any,
@@ -1101,4 +1335,5 @@ export async function updateDocumentProjectionsForVectorStoreFile(
   await upsertDocumentReferrals(db, documentId, encounterDate, metadata);
   await upsertDocumentResults(db, documentId, encounterDate, metadata);
   await upsertDocumentCommunications(db, documentId, encounterDate, metadata);
+  await updateTaxonomyFromProjections(db, documentId);
 }

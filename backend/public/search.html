@@ -339,7 +339,7 @@
         taxonomyKeywordSelect.innerHTML = '';
         const anyOpt = document.createElement('option');
         anyOpt.value = '';
-        anyOpt.textContent = 'Any';
+        anyOpt.textContent = 'Any mention';
         taxonomyKeywordSelect.appendChild(anyOpt);
 
         const filtered = taxonomyKeywords.filter((kw) =>
@@ -476,10 +476,15 @@
         const dateTo = dateToInput.value;
 
         const params = new URLSearchParams();
+        const taxonomyCategoryId = taxonomyCategorySelect
+          ? taxonomyCategorySelect.value
+          : '';
         if (documentType) params.set('document_type', documentType);
         if (providerName) params.set('provider_name', providerName);
         if (clinicOrFacility)
           params.set('clinic_or_facility', clinicOrFacility);
+        if (taxonomyCategoryId)
+          params.set('taxonomy_category_id', taxonomyCategoryId);
         if (taxonomyKeywordId)
           params.set('taxonomy_keyword_id', taxonomyKeywordId);
         if (taxonomySubkeywordId)

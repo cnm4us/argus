@@ -1,7 +1,6 @@
 import express from 'express';
 import type { Request, Response } from 'express';
 import { requireAuth } from '../middleware/auth';
-import { config } from '../config';
 import { isKnownDocumentType } from '../templates';
 import { getDb } from '../db';
 
@@ -74,11 +73,15 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
       : [];
 
     const taxonomyKeywords = Array.isArray(taxonomyKeywordRows)
-      ? (taxonomyKeywordRows as any[]).map((row) => ({
-          id: row.id as string,
-          categoryId: row.category_id as string,
-          label: row.label as string,
-        }))
+      ? (taxonomyKeywordRows as any[])
+          .map((row) => ({
+            id: row.id as string,
+            categoryId: row.category_id as string,
+            label: row.label as string,
+          }))
+          // Hide internal "any_mention" keywords from the facet dropdown; the
+          // "Any mention" behavior is driven by category-only filters instead.
+          .filter((kw) => !kw.id.endsWith('.any_mention'))
       : [];
 
     const taxonomySubkeywords = Array.isArray(taxonomySubkeywordRows)
@@ -106,7 +109,7 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
 // Simple DB-backed search over the documents table using basic filters.
 // Query params:
 //   document_type?, provider_name?, clinic_or_facility?, date_from?, date_to?,
-//   taxonomy_keyword_id?, taxonomy_subkeyword_id?
+//   taxonomy_category_id?, taxonomy_keyword_id?, taxonomy_subkeyword_id?
 router.get('/db', requireAuth, async (req: Request, res: Response) => {
   try {
     const {
@@ -115,6 +118,7 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
       clinic_or_facility,
       date_from,
       date_to,
+      taxonomy_category_id,
       taxonomy_keyword_id,
       taxonomy_subkeyword_id,
     } = req.query as {
@@ -123,10 +127,12 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
       clinic_or_facility?: string;
       date_from?: string;
       date_to?: string;
+      taxonomy_category_id?: string;
       taxonomy_keyword_id?: string;
       taxonomy_subkeyword_id?: string;
     };
 
+    const taxonomyCategoryId = (taxonomy_category_id || '').trim();
     const taxonomyKeywordId = (taxonomy_keyword_id || '').trim();
     const taxonomySubkeywordId = (taxonomy_subkeyword_id || '').trim();
 
@@ -159,7 +165,7 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
     }
 
     let join = '';
-    if (taxonomySubkeywordId || taxonomyKeywordId) {
+    if (taxonomyCategoryId || taxonomySubkeywordId || taxonomyKeywordId) {
       join = 'JOIN document_terms dt ON dt.document_id = d.id';
       if (taxonomySubkeywordId) {
         where.push('dt.subkeyword_id = ?');
@@ -168,11 +174,17 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
         where.push('dt.keyword_id = ?');
         params.push(taxonomyKeywordId);
       }
+
+      if (taxonomyCategoryId) {
+        join += ' JOIN taxonomy_keywords tk ON tk.id = dt.keyword_id';
+        where.push('tk.category_id = ?');
+        params.push(taxonomyCategoryId);
+      }
     }
 
     const db = await getDb();
     const sql = `
-      SELECT
+      SELECT DISTINCT
         d.vector_store_file_id,
         d.openai_file_id,
         d.filename,
