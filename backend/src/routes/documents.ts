@@ -155,6 +155,111 @@ async function extractMetadata(
   return null;
 }
 
+async function extractMetadataFromMarkdown(
+  documentType: DocumentType,
+  markdown: string,
+  fileName: string,
+): Promise<DocumentMetadata | null> {
+  const maxAttempts =
+    config.metadataRetryMaxAttempts > 0 ? config.metadataRetryMaxAttempts : 3;
+  const baseDelaySeconds =
+    config.metadataRetryBaseDelaySeconds > 0
+      ? config.metadataRetryBaseDelaySeconds
+      : 4;
+  const baseDelayMs = baseDelaySeconds * 1000;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      logOpenAI('extractMetadata:markdown:start', {
+        documentType,
+        fileName,
+        attempt,
+      });
+
+      const template = await loadTemplateForDocumentType(documentType);
+
+      const response = await openai.responses.create({
+        model: 'gpt-4.1',
+        instructions: template,
+        input: [
+          {
+            role: 'user',
+            type: 'message',
+            content: [
+              {
+                type: 'input_text',
+                text:
+                  'Use the provided instructions and this document (in Markdown) to produce the requested JSON metadata.\n\n' +
+                  markdown,
+              },
+            ],
+          },
+        ],
+        text: {
+          format: { type: 'json_object' },
+        },
+      });
+
+      const rawText =
+        ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
+        ((response as any).output_text as string | undefined);
+
+      if (!rawText) {
+        console.warn('Metadata extraction (markdown): no text output from model');
+        return null;
+      }
+
+      const parsed = JSON.parse(rawText) as DocumentMetadata;
+
+      if (!parsed.document_type) {
+        parsed.document_type = documentType;
+      }
+      if (!parsed.file_name) {
+        parsed.file_name = fileName;
+      }
+
+      logOpenAI('extractMetadata:markdown:success', {
+        documentType,
+        fileName,
+        attempt,
+      });
+
+      return parsed;
+    } catch (error) {
+      const status = (error as any)?.status;
+      logOpenAI('extractMetadata:markdown:error', {
+        documentType,
+        fileName,
+        attempt,
+        status,
+        error:
+          error instanceof Error
+            ? { message: error.message, stack: error.stack }
+            : error,
+      });
+
+      if (status === 429) {
+        console.error(
+          '[OpenAI rate limit] extractMetadataFromMarkdown received 429 for',
+          fileName,
+          'documentType=',
+          documentType,
+        );
+      }
+
+      if (status === 429 && attempt < maxAttempts) {
+        const delay = baseDelayMs * attempt;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+
+      console.error('Metadata extraction from markdown failed:', error);
+      return null;
+    }
+  }
+
+  return null;
+}
 async function extractMarkdown(
   fileId: string,
   fileName: string,
@@ -209,13 +314,29 @@ async function extractMarkdown(
       return null;
     }
 
+    // Normalize common model behavior of wrapping Markdown in ``` fences.
+    let text = rawText.trim();
+    if (text.startsWith('```')) {
+      // Strip leading fence with optional language (e.g., ```markdown).
+      const firstNewline = text.indexOf('\n');
+      if (firstNewline !== -1) {
+        const fenceLine = text.slice(0, firstNewline).trim();
+        if (fenceLine === '```' || fenceLine.toLowerCase() === '```markdown') {
+          const lastFence = text.lastIndexOf('```');
+          if (lastFence > firstNewline) {
+            text = text.slice(firstNewline + 1, lastFence).trim();
+          }
+        }
+      }
+    }
+
     logOpenAI('extractMarkdown:success', {
       fileId,
       fileName,
-      length: rawText.length,
+      length: text.length,
     });
 
-    return rawText;
+    return text;
   } catch (error) {
     const status = (error as any)?.status;
     logOpenAI('extractMarkdown:error', {
@@ -309,10 +430,14 @@ function slugifyLabel(label: string): string {
 
 async function runTaxonomyExtractionForDocument(
   documentId: number,
-  fileId: string,
+  markdown: string | null,
   fileName: string,
 ): Promise<void> {
   try {
+    if (!markdown || markdown.trim().length === 0) {
+      return;
+    }
+
     const taxonomy = await loadTaxonomy({ includeReview: true });
     if (!taxonomy.categories || taxonomy.categories.length === 0) {
       return;
@@ -381,7 +506,6 @@ async function runTaxonomyExtractionForDocument(
 
         logOpenAI('taxonomy:extract:start', {
           categoryId: category.id,
-          fileId,
           fileName,
           documentId,
         });
@@ -396,11 +520,10 @@ async function runTaxonomyExtractionForDocument(
               content: [
                 {
                   type: 'input_text',
-                  text: userPrompt,
-                },
-                {
-                  type: 'input_file',
-                  file_id: fileId,
+                  text:
+                    userPrompt +
+                    '\n\nDOCUMENT (Markdown):\n\n' +
+                    markdown,
                 },
               ],
             },
@@ -418,7 +541,6 @@ async function runTaxonomyExtractionForDocument(
         if (!rawText) {
           logOpenAI('taxonomy:extract:error', {
             categoryId: category.id,
-            fileId,
             fileName,
             documentId,
             error: { message: 'No text output from taxonomy model' },
@@ -432,7 +554,6 @@ async function runTaxonomyExtractionForDocument(
         } catch (err) {
           logOpenAI('taxonomy:extract:error', {
             categoryId: category.id,
-            fileId,
             fileName,
             documentId,
             error: {
@@ -539,14 +660,12 @@ async function runTaxonomyExtractionForDocument(
 
         logOpenAI('taxonomy:extract:success', {
           categoryId: category.id,
-          fileId,
           fileName,
           documentId,
         });
       } catch (err) {
         logOpenAI('taxonomy:extract:error', {
           categoryId: category.id,
-          fileId,
           fileName,
           documentId,
           error:
@@ -558,7 +677,6 @@ async function runTaxonomyExtractionForDocument(
     }
   } catch (error) {
     logOpenAI('taxonomy:extract:error', {
-      fileId,
       fileName,
       documentId,
       error:
@@ -726,6 +844,120 @@ async function classifyDocument(
   }
 }
 
+async function classifyDocumentFromMarkdown(
+  markdown: string,
+  fileName: string,
+): Promise<ClassificationResult | null> {
+  try {
+    logOpenAI('classify:markdown:start', {
+      fileName,
+    });
+
+    const template = await loadClassificationTemplate();
+
+    const response = await openai.responses.create({
+      model: 'gpt-4.1-mini',
+      instructions: template,
+      input: [
+        {
+          role: 'user',
+          type: 'message',
+          content: [
+            {
+              type: 'input_text',
+              text:
+                'Classify this document according to the provided schema and respond only with JSON that matches the specified JSON output format.\n\n' +
+                markdown,
+            },
+          ],
+        },
+      ],
+      text: {
+        format: { type: 'json_object' },
+      },
+    });
+
+    const rawText =
+      ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
+      ((response as any).output_text as string | undefined);
+
+    if (!rawText) {
+      logOpenAI('classify:markdown:error', {
+        fileName,
+        error: { message: 'No text output from classification model' },
+      });
+      return null;
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (err) {
+      logOpenAI('classify:markdown:error', {
+        fileName,
+        error: {
+          message: 'Failed to parse classification JSON',
+          rawText: rawText.slice(0, 500),
+        },
+      });
+      return null;
+    }
+
+    const predictedTypeRaw =
+      typeof parsed.predicted_type === 'string' ? parsed.predicted_type : '';
+    const confidenceRaw = parsed.confidence;
+    const rawLabel =
+      typeof parsed.raw_label === 'string' ? parsed.raw_label : undefined;
+
+    let confidence: number | null = null;
+    if (typeof confidenceRaw === 'number') {
+      confidence = confidenceRaw;
+    } else if (typeof confidenceRaw === 'string') {
+      const num = Number(confidenceRaw);
+      confidence = Number.isFinite(num) ? num : null;
+    }
+
+    let predictedType: DocumentType | 'unclassified' | null = null;
+    if (predictedTypeRaw === 'unclassified') {
+      predictedType = 'unclassified';
+    } else if (isValidDocumentType(predictedTypeRaw)) {
+      predictedType = predictedTypeRaw;
+    } else {
+      predictedType = null;
+    }
+
+    logOpenAI('classify:markdown:success', {
+      fileName,
+      predictedType,
+      confidence,
+      rawLabel,
+    });
+
+    return {
+      predictedType,
+      confidence,
+      rawLabel,
+    };
+  } catch (error) {
+    logOpenAI('classify:markdown:error', {
+      fileName,
+      error:
+        error instanceof Error
+          ? { message: error.message, stack: error.stack }
+          : error,
+    });
+
+    const status = (error as any)?.status;
+    if (status === 429) {
+      console.error(
+        '[OpenAI rate limit] classifyDocumentFromMarkdown received 429 for',
+        fileName,
+      );
+    }
+    return null;
+  }
+}
+
 async function runSelectedModulesForFile(
   fileId: string,
   fileName: string,
@@ -823,6 +1055,107 @@ async function runSelectedModulesForFile(
       if (status === 429) {
         console.error(
           '[OpenAI rate limit] moduleExtract received 429 for',
+          fileName,
+          'module=',
+          moduleName,
+        );
+      }
+    }
+  }
+
+  return results;
+}
+
+async function runSelectedModulesForMarkdown(
+  markdown: string,
+  fileName: string,
+  selection: ModuleSelectionResult | null,
+): Promise<Record<string, any>> {
+  const results: Record<string, any> = {};
+
+  if (!selection || !Array.isArray(selection.modules) || selection.modules.length === 0) {
+    return results;
+  }
+
+  for (const moduleName of selection.modules) {
+    try {
+      logOpenAI('moduleExtract:markdown:start', {
+        fileName,
+        module: moduleName,
+      });
+
+      const template = await loadModuleTemplate(moduleName);
+
+      const response = await openai.responses.create({
+        model: 'gpt-4.1',
+        instructions: template,
+        input: [
+          {
+            role: 'user',
+            type: 'message',
+            content: [
+              {
+                type: 'input_text',
+                text:
+                  'Extract this module according to the instructions from the following document (in Markdown) and output strict JSON only.\n\n' +
+                  markdown,
+              },
+            ],
+          },
+        ],
+        text: {
+          format: { type: 'json_object' },
+        },
+      });
+
+      const rawText =
+        ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
+        ((response as any).output_text as string | undefined);
+
+      if (!rawText) {
+        logOpenAI('moduleExtract:markdown:error', {
+          fileName,
+          module: moduleName,
+          error: { message: 'No text output from module extraction model' },
+        });
+        continue;
+      }
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch (err) {
+        logOpenAI('moduleExtract:markdown:error', {
+          fileName,
+          module: moduleName,
+          error: {
+            message: 'Failed to parse module extraction JSON',
+            rawText: rawText.slice(0, 500),
+          },
+        });
+        continue;
+      }
+
+      results[moduleName] = parsed;
+
+      logOpenAI('moduleExtract:markdown:success', {
+        fileName,
+        module: moduleName,
+      });
+    } catch (error) {
+      logOpenAI('moduleExtract:markdown:error', {
+        status: (error as any)?.status,
+        fileName,
+        module: moduleName,
+        error:
+          error instanceof Error
+            ? { message: error.message, stack: error.stack }
+            : error,
+      });
+      const status = (error as any)?.status;
+      if (status === 429) {
+        console.error(
+          '[OpenAI rate limit] moduleExtractFromMarkdown received 429 for',
           fileName,
           'module=',
           moduleName,
@@ -963,6 +1296,127 @@ async function classifyHighLevelDocument(
   }
 }
 
+async function classifyHighLevelDocumentFromMarkdown(
+  markdown: string,
+  fileName: string,
+): Promise<HighLevelClassificationResult | null> {
+  try {
+    logOpenAI('highLevelClassify:markdown:start', {
+      fileName,
+    });
+
+    const template = await loadHighLevelClassificationTemplate();
+
+    const response = await openai.responses.create({
+      model: 'gpt-4.1-mini',
+      instructions: template,
+      input: [
+        {
+          role: 'user',
+          type: 'message',
+          content: [
+            {
+              type: 'input_text',
+              text:
+                'Classify this document at a high level according to the provided schema and respond only with JSON that matches the specified JSON output format.\n\n' +
+                markdown,
+            },
+          ],
+        },
+      ],
+      text: {
+        format: { type: 'json_object' },
+      },
+    });
+
+    const rawText =
+      ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
+      ((response as any).output_text as string | undefined);
+
+    if (!rawText) {
+      logOpenAI('highLevelClassify:markdown:error', {
+        fileName,
+        error: {
+          message: 'No text output from high-level classification model',
+        },
+      });
+      return null;
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (err) {
+      logOpenAI('highLevelClassify:markdown:error', {
+        fileName,
+        error: {
+          message: 'Failed to parse high-level classification JSON',
+          rawText: rawText.slice(0, 500),
+        },
+      });
+      return null;
+    }
+
+    const typeRaw = typeof parsed.type === 'string' ? parsed.type : '';
+    const allowedTypes: HighLevelType[] = [
+      'clinical_encounter',
+      'communication',
+      'result',
+      'referral',
+      'administrative',
+      'external_record',
+    ];
+
+    const type = allowedTypes.includes(typeRaw as HighLevelType)
+      ? (typeRaw as HighLevelType)
+      : null;
+
+    if (!type) {
+      logOpenAI('highLevelClassify:markdown:error', {
+        fileName,
+        error: {
+          message: 'High-level classification returned invalid type',
+          rawType: typeRaw,
+        },
+      });
+      return null;
+    }
+
+    const confidenceRaw = parsed.confidence;
+    let confidence: number | null = null;
+    if (typeof confidenceRaw === 'number') {
+      confidence = confidenceRaw;
+    } else if (typeof confidenceRaw === 'string') {
+      const num = Number(confidenceRaw);
+      confidence = Number.isFinite(num) ? num : null;
+    }
+
+    logOpenAI('highLevelClassify:markdown:success', {
+      fileName,
+      type,
+      confidence,
+    });
+
+    return { type, confidence };
+  } catch (error) {
+    logOpenAI('highLevelClassify:markdown:error', {
+      fileName,
+      error:
+        error instanceof Error
+          ? { message: error.message, stack: error.stack }
+          : error,
+    });
+    const status = (error as any)?.status;
+    if (status === 429) {
+      console.error(
+        '[OpenAI rate limit] highLevelClassifyFromMarkdown received 429 for',
+        fileName,
+      );
+    }
+    return null;
+  }
+}
+
 async function selectModulesForFile(
   fileId: string,
   fileName: string,
@@ -1076,6 +1530,119 @@ async function selectModulesForFile(
     if (status === 429) {
       console.error(
         '[OpenAI rate limit] moduleSelection received 429 for',
+        fileName,
+      );
+    }
+    return null;
+  }
+}
+
+async function selectModulesForMarkdown(
+  markdown: string,
+  fileName: string,
+  highLevelType: HighLevelType | null,
+): Promise<ModuleSelectionResult | null> {
+  try {
+    logOpenAI('moduleSelection:markdown:start', {
+      fileName,
+      highLevelType,
+    });
+
+    const template = await loadModuleSelectionTemplate();
+
+    const documentTypeHint =
+      highLevelType && typeof highLevelType === 'string'
+        ? highLevelType
+        : 'unknown';
+
+    const response = await openai.responses.create({
+      model: 'gpt-4.1-mini',
+      instructions: template,
+      input: [
+        {
+          role: 'user',
+          type: 'message',
+          content: [
+            {
+              type: 'input_text',
+              text:
+                `The high-level document.type from a previous step is "${documentTypeHint}". ` +
+                'Use it only as a hint; it may be incorrect. Based on this and the document text (in Markdown) below, select all applicable modules and respond ONLY with valid JSON matching the specified JSON output format.\n\n' +
+                markdown,
+            },
+          ],
+        },
+      ],
+      text: {
+        format: { type: 'json_object' },
+      },
+    });
+
+    const rawText =
+      ((response as any).output?.[0]?.content?.[0]?.text as string | undefined) ??
+      ((response as any).output_text as string | undefined);
+
+    if (!rawText) {
+      logOpenAI('moduleSelection:markdown:error', {
+        fileName,
+        error: { message: 'No text output from module selection model' },
+      });
+      return null;
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (err) {
+      logOpenAI('moduleSelection:markdown:error', {
+        fileName,
+        error: {
+          message: 'Failed to parse module selection JSON',
+          rawText: rawText.slice(0, 500),
+        },
+      });
+      return null;
+    }
+
+    const rawModules = Array.isArray(parsed.modules) ? parsed.modules : [];
+    const allowed: ModuleName[] = [
+      'provider',
+      'patient',
+      'reason_for_encounter',
+      'vitals',
+      'smoking',
+      'sexual_health',
+      'mental_health',
+      'referral',
+      'results',
+      'communication',
+    ];
+
+    const modules: ModuleName[] = rawModules
+      .map((m: any) => (typeof m === 'string' ? m.trim() : ''))
+      .filter((m: string) => allowed.includes(m as ModuleName)) as ModuleName[];
+
+    logOpenAI('moduleSelection:markdown:success', {
+      fileName,
+      highLevelType,
+      modules,
+    });
+
+    return { modules };
+  } catch (error) {
+    logOpenAI('moduleSelection:markdown:error', {
+      status: (error as any)?.status,
+      fileName,
+      highLevelType,
+      error:
+        error instanceof Error
+          ? { message: error.message, stack: error.stack }
+          : error,
+    });
+    const status = (error as any)?.status;
+    if (status === 429) {
+      console.error(
+        '[OpenAI rate limit] moduleSelectionFromMarkdown received 429 for',
         fileName,
       );
     }
@@ -1215,9 +1782,13 @@ router.post(
         console.error('Markdown extraction failed:', err);
       }
 
-      if (!asyncMode) {
-        // 2) Extract structured metadata using the templates and file (synchronous path).
-        metadata = await extractMetadata(effectiveDocumentType, file.id, originalname);
+      if (!asyncMode && markdown && markdown.trim().length > 0) {
+        // 2) Extract structured metadata using the templates and Markdown (synchronous path).
+        metadata = await extractMetadataFromMarkdown(
+          effectiveDocumentType,
+          markdown,
+          originalname,
+        );
 
         if (metadata) {
           if (metadata.date) attributes.date = metadata.date;
@@ -1229,19 +1800,19 @@ router.post(
           }
           attributes.has_metadata = true;
 
-          highLevelClassification = await classifyHighLevelDocument(
-            file.id,
+          highLevelClassification = await classifyHighLevelDocumentFromMarkdown(
+            markdown,
             originalname,
           );
-          moduleSelection = await selectModulesForFile(
-            file.id,
+          moduleSelection = await selectModulesForMarkdown(
+            markdown,
             originalname,
             highLevelClassification ? highLevelClassification.type : null,
           );
 
           if (moduleSelection) {
-            moduleOutputs = await runSelectedModulesForFile(
-              file.id,
+            moduleOutputs = await runSelectedModulesForMarkdown(
+              markdown,
               originalname,
               moduleSelection,
             );
@@ -1319,7 +1890,7 @@ router.post(
       if (documentDbId !== null) {
         await runTaxonomyExtractionForDocument(
           documentDbId,
-          file.id,
+          markdown,
           originalname,
         );
       }
