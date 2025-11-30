@@ -169,7 +169,7 @@ async function runVectorSearchForDb(
 }
 
 // GET /api/search/options
-// Return distinct provider_name, clinic_or_facility, and keywords values to populate filters.
+// Return distinct provider_name, clinic_or_facility, and taxonomy values to populate filters.
 router.get('/options', requireAuth, async (_req: Request, res: Response) => {
   try {
     const db = await getDb();
@@ -192,11 +192,29 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
       `,
     )) as any[];
 
-    const [keywordRows] = (await db.query(
+    const [taxonomyCategoryRows] = (await db.query(
       `
-        SELECT metadata_json
-        FROM documents
-        WHERE JSON_TYPE(metadata_json) = 'OBJECT'
+        SELECT id, label
+        FROM taxonomy_categories
+        ORDER BY label ASC
+      `,
+    )) as any[];
+
+    const [taxonomyKeywordRows] = (await db.query(
+      `
+        SELECT id, category_id, label
+        FROM taxonomy_keywords
+        WHERE status IN ('approved','review')
+        ORDER BY label ASC
+      `,
+    )) as any[];
+
+    const [taxonomySubkeywordRows] = (await db.query(
+      `
+        SELECT id, keyword_id, label
+        FROM taxonomy_subkeywords
+        WHERE status IN ('approved','review')
+        ORDER BY label ASC
       `,
     )) as any[];
 
@@ -209,39 +227,36 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
         )
       : [];
 
-    const keywordSet = new Set<string>();
-    if (Array.isArray(keywordRows)) {
-      for (const row of keywordRows as any[]) {
-        let meta: any = row.metadata_json;
-        if (typeof meta === 'string') {
-          try {
-            meta = JSON.parse(meta);
-          } catch {
-            meta = null;
-          }
-        }
+    const taxonomyCategories = Array.isArray(taxonomyCategoryRows)
+      ? (taxonomyCategoryRows as any[]).map((row) => ({
+          id: row.id as string,
+          label: row.label as string,
+        }))
+      : [];
 
-        if (!meta || typeof meta !== 'object') {
-          continue;
-        }
+    const taxonomyKeywords = Array.isArray(taxonomyKeywordRows)
+      ? (taxonomyKeywordRows as any[]).map((row) => ({
+          id: row.id as string,
+          categoryId: row.category_id as string,
+          label: row.label as string,
+        }))
+      : [];
 
-        const kws = (meta as any).keywords;
-        if (Array.isArray(kws)) {
-          for (const kw of kws) {
-            if (typeof kw !== 'string') continue;
-            const trimmed = kw.trim();
-            if (!trimmed) continue;
-            keywordSet.add(trimmed);
-          }
-        }
-      }
-    }
+    const taxonomySubkeywords = Array.isArray(taxonomySubkeywordRows)
+      ? (taxonomySubkeywordRows as any[]).map((row) => ({
+          id: row.id as string,
+          keywordId: row.keyword_id as string,
+          label: row.label as string,
+        }))
+      : [];
 
-    const keywords = Array.from(keywordSet).sort((a, b) =>
-      a.localeCompare(b),
-    );
-
-    res.json({ providers, clinics, keywords });
+    res.json({
+      providers,
+      clinics,
+      taxonomyCategories,
+      taxonomyKeywords,
+      taxonomySubkeywords,
+    });
   } catch (error) {
     console.error('Error in GET /api/search/options:', error);
     res.status(500).json({ error: 'Failed to load search options' });
@@ -250,7 +265,9 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
 
 // GET /api/search/db
 // Simple DB-backed search over the documents table using basic filters.
-// Query params: document_type?, provider_name?, clinic_or_facility?, date_from?, date_to?, keyword?, query?
+// Query params:
+//   document_type?, provider_name?, clinic_or_facility?, date_from?, date_to?,
+//   taxonomy_keyword_id?, taxonomy_subkeyword_id?, query?
 router.get('/db', requireAuth, async (req: Request, res: Response) => {
   try {
     const {
@@ -259,7 +276,8 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
       clinic_or_facility,
       date_from,
       date_to,
-      keyword,
+      taxonomy_keyword_id,
+      taxonomy_subkeyword_id,
       query,
     } = req.query as {
       document_type?: string;
@@ -267,11 +285,14 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
       clinic_or_facility?: string;
       date_from?: string;
       date_to?: string;
-      keyword?: string;
+      taxonomy_keyword_id?: string;
+      taxonomy_subkeyword_id?: string;
       query?: string;
     };
 
     const searchQuery = (query || '').trim();
+    const taxonomyKeywordId = (taxonomy_keyword_id || '').trim();
+    const taxonomySubkeywordId = (taxonomy_subkeyword_id || '').trim();
 
     const where: string[] = [];
     const params: any[] = [];
@@ -301,11 +322,16 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
       params.push(date_to.trim());
     }
 
-    if (keyword && keyword.trim() !== '') {
-      where.push(
-        "JSON_CONTAINS(metadata_json, JSON_QUOTE(?), '$.keywords')",
-      );
-      params.push(keyword.trim());
+    let join = '';
+    if (taxonomySubkeywordId || taxonomyKeywordId) {
+      join = 'JOIN document_terms dt ON dt.document_id = d.id';
+      if (taxonomySubkeywordId) {
+        where.push('dt.subkeyword_id = ?');
+        params.push(taxonomySubkeywordId);
+      } else if (taxonomyKeywordId) {
+        where.push('dt.keyword_id = ?');
+        params.push(taxonomyKeywordId);
+      }
     }
 
     // If a natural-language query is provided, use vector search to
@@ -337,7 +363,7 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
         scoresByFileId = scores;
 
         const placeholders = fileIds.map(() => '?').join(', ');
-        where.push(`openai_file_id IN (${placeholders})`);
+        where.push(`d.openai_file_id IN (${placeholders})`);
         params.push(...fileIds);
       }
     }
@@ -345,16 +371,17 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
     const db = await getDb();
     const sql = `
       SELECT
-        vector_store_file_id,
-        openai_file_id,
-        filename,
-        document_type,
-        date,
-        provider_name,
-        clinic_or_facility
-      FROM documents
+        d.vector_store_file_id,
+        d.openai_file_id,
+        d.filename,
+        d.document_type,
+        d.date,
+        d.provider_name,
+        d.clinic_or_facility
+      FROM documents d
+      ${join}
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-      ORDER BY date DESC, created_at DESC
+      ORDER BY d.date DESC, d.created_at DESC
     `;
 
     const [rows] = (await db.query(sql, params)) as any[];

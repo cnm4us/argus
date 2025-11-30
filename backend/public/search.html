@@ -51,6 +51,15 @@
       .filters-date-range {
         grid-column: 1 / -1;
       }
+      .filters-taxonomy {
+        grid-column: 1 / -1;
+        display: flex;
+        gap: 0.75rem;
+      }
+      .filters-taxonomy > div {
+        flex: 1;
+        min-width: 0;
+      }
       .date-range-row {
         display: flex;
         gap: 0.75rem;
@@ -191,11 +200,25 @@
             <option value="">Any</option>
           </select>
         </div>
-        <div>
-          <label for="keyword">Keyword</label>
-          <select id="keyword" name="keyword">
-            <option value="">Any</option>
-          </select>
+        <div class="filters-taxonomy">
+          <div>
+            <label for="taxonomy_category">Category</label>
+            <select id="taxonomy_category" name="taxonomy_category">
+              <option value="">Any</option>
+            </select>
+          </div>
+          <div>
+            <label for="taxonomy_keyword">Keyword</label>
+            <select id="taxonomy_keyword" name="taxonomy_keyword">
+              <option value="">Any</option>
+            </select>
+          </div>
+          <div>
+            <label for="taxonomy_subkeyword">Subkeyword</label>
+            <select id="taxonomy_subkeyword" name="taxonomy_subkeyword">
+              <option value="">Any</option>
+            </select>
+          </div>
         </div>
         <div class="filters-date-range">
           <label>Date Range</label>
@@ -252,11 +275,20 @@
       const providerSelect = document.getElementById('provider_name');
       const clinicSelect = document.getElementById('clinic_or_facility');
       const queryInput = document.getElementById('query');
-      const keywordSelect = document.getElementById('keyword');
+      const taxonomyCategorySelect =
+        document.getElementById('taxonomy_category');
+      const taxonomyKeywordSelect =
+        document.getElementById('taxonomy_keyword');
+      const taxonomySubkeywordSelect = document.getElementById(
+        'taxonomy_subkeyword',
+      );
       let dateRangeInitialized = false;
       let currentItems = [];
       let currentSortKey = 'date';
       let currentSortDir = 'desc';
+      let taxonomyCategories = [];
+      let taxonomyKeywords = [];
+      let taxonomySubkeywords = [];
 
       async function loadOptions() {
         try {
@@ -272,7 +304,9 @@
 
           const providers = json.providers || [];
           const clinics = json.clinics || [];
-          const keywords = json.keywords || [];
+          taxonomyCategories = json.taxonomyCategories || [];
+          taxonomyKeywords = json.taxonomyKeywords || [];
+          taxonomySubkeywords = json.taxonomySubkeywords || [];
 
           for (const name of providers) {
             if (!name) continue;
@@ -290,17 +324,88 @@
             clinicSelect.appendChild(opt);
           }
 
-          if (keywordSelect) {
-            for (const kw of keywords) {
-              if (!kw) continue;
+          if (taxonomyCategorySelect) {
+            for (const cat of taxonomyCategories) {
+              if (!cat || !cat.id) continue;
               const opt = document.createElement('option');
-              opt.value = kw;
-              opt.textContent = kw;
-              keywordSelect.appendChild(opt);
+              opt.value = cat.id;
+              opt.textContent = cat.label || cat.id;
+              taxonomyCategorySelect.appendChild(opt);
             }
           }
+
+          updateTaxonomyKeywordOptions();
+          updateTaxonomySubkeywordOptions();
         } catch (err) {
           console.error('Error loading search options', err);
+        }
+      }
+
+      function updateTaxonomyKeywordOptions() {
+        if (!taxonomyKeywordSelect) return;
+        const categoryId = taxonomyCategorySelect
+          ? taxonomyCategorySelect.value
+          : '';
+
+        taxonomyKeywordSelect.innerHTML = '';
+        const anyOpt = document.createElement('option');
+        anyOpt.value = '';
+        anyOpt.textContent = 'Any';
+        taxonomyKeywordSelect.appendChild(anyOpt);
+
+        const filtered = taxonomyKeywords.filter((kw) =>
+          categoryId ? kw.categoryId === categoryId : true,
+        );
+
+        for (const kw of filtered) {
+          if (!kw || !kw.id) continue;
+          const opt = document.createElement('option');
+          opt.value = kw.id;
+          opt.textContent = kw.label || kw.id;
+          taxonomyKeywordSelect.appendChild(opt);
+        }
+
+        taxonomyKeywordSelect.disabled = filtered.length === 0;
+        if (taxonomyKeywordSelect.disabled) {
+          taxonomyKeywordSelect.value = '';
+        }
+
+        updateTaxonomySubkeywordOptions();
+      }
+
+      function updateTaxonomySubkeywordOptions() {
+        if (!taxonomySubkeywordSelect) return;
+        const keywordId = taxonomyKeywordSelect
+          ? taxonomyKeywordSelect.value
+          : '';
+
+        taxonomySubkeywordSelect.innerHTML = '';
+        const anyOpt = document.createElement('option');
+        anyOpt.value = '';
+        anyOpt.textContent = 'Any';
+        taxonomySubkeywordSelect.appendChild(anyOpt);
+
+        if (!keywordId) {
+          taxonomySubkeywordSelect.disabled = true;
+          taxonomySubkeywordSelect.value = '';
+          return;
+        }
+
+        const filtered = taxonomySubkeywords.filter(
+          (sk) => sk.keywordId === keywordId,
+        );
+
+        for (const sk of filtered) {
+          if (!sk || !sk.id) continue;
+          const opt = document.createElement('option');
+          opt.value = sk.id;
+          opt.textContent = sk.label || sk.id;
+          taxonomySubkeywordSelect.appendChild(opt);
+        }
+
+        taxonomySubkeywordSelect.disabled = filtered.length === 0;
+        if (taxonomySubkeywordSelect.disabled) {
+          taxonomySubkeywordSelect.value = '';
         }
       }
 
@@ -393,7 +498,12 @@
         const documentType = document.getElementById('document_type').value;
         const providerName = providerSelect.value.trim();
         const clinicOrFacility = clinicSelect.value.trim();
-        const keyword = keywordSelect ? keywordSelect.value : '';
+        const taxonomyKeywordId = taxonomyKeywordSelect
+          ? taxonomyKeywordSelect.value
+          : '';
+        const taxonomySubkeywordId = taxonomySubkeywordSelect
+          ? taxonomySubkeywordSelect.value
+          : '';
         const dateFrom = dateFromInput.value;
         const dateTo = dateToInput.value;
 
@@ -403,7 +513,10 @@
         if (providerName) params.set('provider_name', providerName);
         if (clinicOrFacility)
           params.set('clinic_or_facility', clinicOrFacility);
-        if (keyword) params.set('keyword', keyword);
+        if (taxonomyKeywordId)
+          params.set('taxonomy_keyword_id', taxonomyKeywordId);
+        if (taxonomySubkeywordId)
+          params.set('taxonomy_subkeyword_id', taxonomySubkeywordId);
         if (dateFrom) params.set('date_from', dateFrom);
         if (dateTo) params.set('date_to', dateTo);
 
@@ -483,6 +596,18 @@
           renderResults(currentItems);
         });
       });
+
+      if (taxonomyCategorySelect) {
+        taxonomyCategorySelect.addEventListener('change', () => {
+          updateTaxonomyKeywordOptions();
+        });
+      }
+
+      if (taxonomyKeywordSelect) {
+        taxonomyKeywordSelect.addEventListener('change', () => {
+          updateTaxonomySubkeywordOptions();
+        });
+      }
 
       // Initial load: options + search with no filters.
       loadOptions();

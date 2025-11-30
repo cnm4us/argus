@@ -252,6 +252,66 @@ export async function initDb(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `;
 
+  const createTaxonomyCategoriesTableSQL = `
+    CREATE TABLE IF NOT EXISTS taxonomy_categories (
+      id          VARCHAR(64) PRIMARY KEY,
+      label       VARCHAR(255) NOT NULL,
+      description TEXT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
+  const createTaxonomyKeywordsTableSQL = `
+    CREATE TABLE IF NOT EXISTS taxonomy_keywords (
+      id            VARCHAR(128) PRIMARY KEY,
+      category_id   VARCHAR(64) NOT NULL,
+      label         VARCHAR(255) NOT NULL,
+      synonyms_json JSON NOT NULL,
+      description   TEXT NULL,
+      status        ENUM('approved','review') NOT NULL DEFAULT 'approved',
+      created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      CONSTRAINT fk_keywords_category
+        FOREIGN KEY (category_id) REFERENCES taxonomy_categories(id)
+          ON DELETE CASCADE ON UPDATE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
+  const createTaxonomySubkeywordsTableSQL = `
+    CREATE TABLE IF NOT EXISTS taxonomy_subkeywords (
+      id             VARCHAR(160) PRIMARY KEY,
+      keyword_id     VARCHAR(128) NOT NULL,
+      label          VARCHAR(255) NOT NULL,
+      synonyms_json  JSON NOT NULL,
+      description    TEXT NULL,
+      status         ENUM('approved','review') NOT NULL DEFAULT 'approved',
+      created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      CONSTRAINT fk_subkeywords_keyword
+        FOREIGN KEY (keyword_id) REFERENCES taxonomy_keywords(id)
+          ON DELETE CASCADE ON UPDATE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
+  const createDocumentTermsTableSQL = `
+    CREATE TABLE IF NOT EXISTS document_terms (
+      id              INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      document_id     INT UNSIGNED NOT NULL,
+      keyword_id      VARCHAR(128) NULL,
+      subkeyword_id   VARCHAR(160) NULL,
+      created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_doc_terms_doc (document_id),
+      KEY idx_doc_terms_keyword (keyword_id),
+      KEY idx_doc_terms_subkeyword (subkeyword_id),
+      UNIQUE KEY uniq_doc_term (document_id, keyword_id, subkeyword_id),
+      CONSTRAINT fk_doc_terms_keyword
+        FOREIGN KEY (keyword_id) REFERENCES taxonomy_keywords(id)
+          ON DELETE SET NULL ON UPDATE CASCADE,
+      CONSTRAINT fk_doc_terms_subkeyword
+        FOREIGN KEY (subkeyword_id) REFERENCES taxonomy_subkeywords(id)
+          ON DELETE SET NULL ON UPDATE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
   await db.query(createDocumentVitalsTableSQL);
   await db.query(createDocumentSmokingTableSQL);
   await db.query(createDocumentMentalHealthTableSQL);
@@ -259,6 +319,33 @@ export async function initDb(): Promise<void> {
   await db.query(createDocumentResultsTableSQL);
   await db.query(createDocumentAppointmentsTableSQL);
   await db.query(createDocumentCommunicationsTableSQL);
+  await db.query(createTaxonomyCategoriesTableSQL);
+  await db.query(createTaxonomyKeywordsTableSQL);
+  await db.query(createTaxonomySubkeywordsTableSQL);
+  await db.query(createDocumentTermsTableSQL);
+
+  // Seed initial taxonomy categories if none exist yet.
+  const [taxonomyCategoryRows] = (await db.query(
+    'SELECT COUNT(*) AS count FROM taxonomy_categories',
+  )) as any[];
+  const taxonomyCategoryCount =
+    Array.isArray(taxonomyCategoryRows) && taxonomyCategoryRows.length > 0
+      ? Number(taxonomyCategoryRows[0].count ?? 0)
+      : 0;
+
+  if (!Number.isNaN(taxonomyCategoryCount) && taxonomyCategoryCount === 0) {
+    await db.query(
+      `
+        INSERT INTO taxonomy_categories (id, label, description)
+        VALUES
+          ('respiratory', 'Respiratory', 'Respiratory status, oxygenation, COPD/emphysema, and related concepts.'),
+          ('results', 'Results', 'Lab and imaging results that impact follow-up and standard of care.'),
+          ('referrals', 'Referrals', 'Specialty referrals, referral reasons, and denials.'),
+          ('communication', 'Communication', 'Patient-provider communications, telephone encounters, and messaging.'),
+          ('appointments', 'Appointments', 'Scheduling, missed visits, cancellations, and rescheduling.')
+      `,
+    );
+  }
 
   // Ensure document_communications enum columns include all expected values.
   try {

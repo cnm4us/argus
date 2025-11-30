@@ -21,6 +21,7 @@ import { getDb } from '../db';
 import { uploadPdfToS3, deleteObjectFromS3 } from '../s3Client';
 import { logOpenAI } from '../logger';
 import { updateDocumentProjectionsForVectorStoreFile } from '../metadataProjections';
+import { loadTaxonomy, insertKeyword, insertSubkeyword, insertDocumentTerm } from '../taxonomy';
 
 const router = express.Router();
 
@@ -189,8 +190,300 @@ interface ModuleSelectionResult {
   modules: ModuleName[];
 }
 
+interface TaxonomySubkeywordMatch {
+  subkeyword_id?: string | null;
+  new_subkeyword?: {
+    label?: string | null;
+    synonyms?: string[] | null;
+  } | null;
+}
+
+interface TaxonomyKeywordMatch {
+  keyword_id?: string | null;
+  new_keyword?: {
+    label?: string | null;
+    synonyms?: string[] | null;
+  } | null;
+  subkeyword_matches?: TaxonomySubkeywordMatch[] | null;
+}
+
+interface TaxonomyExtractionResult {
+  category_id?: string;
+  keyword_matches?: TaxonomyKeywordMatch[] | null;
+}
+
 let activeMetadataJobs = 0;
 const metadataJobQueue: Array<() => void> = [];
+
+function slugifyLabel(label: string): string {
+  return label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+async function runTaxonomyExtractionForDocument(
+  documentId: number,
+  fileId: string,
+  fileName: string,
+): Promise<void> {
+  try {
+    const taxonomy = await loadTaxonomy({ includeReview: true });
+    if (!taxonomy.categories || taxonomy.categories.length === 0) {
+      return;
+    }
+
+    const categoriesOverview = taxonomy.categories.map((c) => c.label);
+
+    for (const category of taxonomy.categories) {
+      try {
+        const systemPrompt =
+          'You are a medical-legal taxonomy assistant. ' +
+          'You are given a fixed list of high-level categories, and for ONE selected category you see its existing keywords and subkeywords. ' +
+          'Your job is to decide which existing keywords/subkeywords apply to the document and to optionally propose NEW keywords/subkeywords with synonyms. ' +
+          'You MUST NOT modify or delete existing taxonomy entries; only add. ' +
+          "Be conservative and avoid creating redundant concepts. Respond ONLY with valid JSON that matches the expected shape.";
+
+        const userPrompt =
+          'CATEGORIES (fixed list, for reference only):\n' +
+          JSON.stringify(categoriesOverview) +
+          '\n\n' +
+          'SELECTED CATEGORY CONTEXT (JSON):\n' +
+          JSON.stringify({
+            id: category.id,
+            label: category.label,
+            keywords: category.keywords.map((kw) => ({
+              id: kw.id,
+              label: kw.label,
+              synonyms: kw.synonyms,
+              subkeywords: kw.subkeywords.map((sk) => ({
+                id: sk.id,
+                label: sk.label,
+                synonyms: sk.synonyms,
+              })),
+            })),
+          }) +
+          '\n\n' +
+          'TASK:\n' +
+          `1) Identify concepts in the attached document that belong under the "${category.label}" category.\n` +
+          '2) For each concept, decide:\n' +
+          '   - Does it match an existing keyword (or its synonyms)? If yes, reference it by keyword_id.\n' +
+          '   - If not, should a NEW keyword be created? If yes, provide new_keyword.label and new_keyword.synonyms.\n' +
+          '3) For each keyword (existing or new) that applies:\n' +
+          '   - Choose any applicable existing subkeywords.\n' +
+          '   - Optionally define new subkeywords with label and synonyms.\n\n' +
+          'IMPORTANT CONSTRAINTS:\n' +
+          '- Do NOT invent new categories.\n' +
+          '- A given synonym string should belong to at most one keyword across the taxonomy.\n' +
+          '- Subkeywords under the same keyword should not share synonyms.\n' +
+          '- Be conservative; avoid unnecessary new items.\n\n' +
+          'OUTPUT JSON SHAPE:\n' +
+          '{\n' +
+          '  "category_id": string,\n' +
+          '  "keyword_matches": [\n' +
+          '    {\n' +
+          '      "keyword_id": string | null,\n' +
+          '      "new_keyword": { "label": string | null, "synonyms": string[] } | null,\n' +
+          '      "subkeyword_matches": [\n' +
+          '        {\n' +
+          '          "subkeyword_id": string | null,\n' +
+          '          "new_subkeyword": { "label": string | null, "synonyms": string[] } | null\n' +
+          '        }\n' +
+          '      ]\n' +
+          '    }\n' +
+          '  ]\n' +
+          '}\n';
+
+        logOpenAI('taxonomy:extract:start', {
+          categoryId: category.id,
+          fileId,
+          fileName,
+          documentId,
+        });
+
+        const response = await openai.responses.create({
+          model: 'gpt-4.1-mini',
+          instructions: systemPrompt,
+          input: [
+            {
+              role: 'user',
+              type: 'message',
+              content: [
+                {
+                  type: 'input_text',
+                  text: userPrompt,
+                },
+                {
+                  type: 'input_file',
+                  file_id: fileId,
+                },
+              ],
+            },
+          ],
+          text: {
+            format: { type: 'json_object' },
+          },
+        });
+
+        const rawText =
+          ((response as any).output?.[0]?.content?.[0]?.text as
+            string | undefined) ??
+          ((response as any).output_text as string | undefined);
+
+        if (!rawText) {
+          logOpenAI('taxonomy:extract:error', {
+            categoryId: category.id,
+            fileId,
+            fileName,
+            documentId,
+            error: { message: 'No text output from taxonomy model' },
+          });
+          continue;
+        }
+
+        let parsed: TaxonomyExtractionResult;
+        try {
+          parsed = JSON.parse(rawText) as TaxonomyExtractionResult;
+        } catch (err) {
+          logOpenAI('taxonomy:extract:error', {
+            categoryId: category.id,
+            fileId,
+            fileName,
+            documentId,
+            error: {
+              message: 'Failed to parse taxonomy JSON',
+              rawText: rawText.slice(0, 500),
+            },
+          });
+          continue;
+        }
+
+        if (parsed.category_id && parsed.category_id !== category.id) {
+          // Ignore mismatched category responses.
+          continue;
+        }
+
+        const matches = parsed.keyword_matches ?? [];
+        if (!Array.isArray(matches) || matches.length === 0) {
+          continue;
+        }
+
+        const db = await getDb();
+
+        for (const match of matches) {
+          let keywordId = (match.keyword_id ?? '').trim() || null;
+
+          if (!keywordId && match.new_keyword) {
+            const label = (match.new_keyword.label ?? '').trim();
+            if (label) {
+              const slug = slugifyLabel(label);
+              keywordId = `${category.id}.${slug}`;
+
+              const synonyms =
+                Array.isArray(match.new_keyword.synonyms) &&
+                match.new_keyword.synonyms.length > 0
+                  ? match.new_keyword.synonyms
+                  : [label];
+
+              await insertKeyword({
+                categoryId: category.id,
+                id: keywordId,
+                label,
+                synonyms,
+                status: 'review',
+                connection: db,
+              });
+            }
+          }
+
+          if (!keywordId) {
+            continue;
+          }
+
+          // Link the document to the keyword.
+          await insertDocumentTerm({
+            documentId,
+            keywordId,
+            subkeywordId: null,
+            connection: db,
+          });
+
+          const subMatches = match.subkeyword_matches ?? [];
+          if (!Array.isArray(subMatches) || subMatches.length === 0) {
+            continue;
+          }
+
+          for (const sm of subMatches) {
+            let subkeywordId = (sm.subkeyword_id ?? '').trim() || null;
+
+            if (!subkeywordId && sm.new_subkeyword) {
+              const skLabel = (sm.new_subkeyword.label ?? '').trim();
+              if (skLabel) {
+                const skSlug = slugifyLabel(skLabel);
+                subkeywordId = `${keywordId}.${skSlug}`;
+
+                const skSynonyms =
+                  Array.isArray(sm.new_subkeyword.synonyms) &&
+                  sm.new_subkeyword.synonyms.length > 0
+                    ? sm.new_subkeyword.synonyms
+                    : [skLabel];
+
+                await insertSubkeyword({
+                  keywordId,
+                  id: subkeywordId,
+                  label: skLabel,
+                  synonyms: skSynonyms,
+                  status: 'review',
+                  connection: db,
+                });
+              }
+            }
+
+            if (!subkeywordId) {
+              continue;
+            }
+
+            await insertDocumentTerm({
+              documentId,
+              keywordId,
+              subkeywordId,
+              connection: db,
+            });
+          }
+        }
+
+        logOpenAI('taxonomy:extract:success', {
+          categoryId: category.id,
+          fileId,
+          fileName,
+          documentId,
+        });
+      } catch (err) {
+        logOpenAI('taxonomy:extract:error', {
+          categoryId: category.id,
+          fileId,
+          fileName,
+          documentId,
+          error:
+            err instanceof Error
+              ? { message: err.message, stack: err.stack }
+              : err,
+        });
+      }
+    }
+  } catch (error) {
+    logOpenAI('taxonomy:extract:error', {
+      fileId,
+      fileName,
+      documentId,
+      error:
+        error instanceof Error
+          ? { message: error.message, stack: error.stack }
+          : error,
+    });
+  }
+}
 
 async function runWithMetadataConcurrency<T>(fn: () => Promise<T>): Promise<T> {
   const limit =
@@ -874,6 +1167,7 @@ router.post(
       );
 
       // 4) Persist metadata snapshot into MariaDB.
+      let documentDbId: number | null = null;
       try {
         const db = await getDb();
         const dateValue =
@@ -890,7 +1184,7 @@ router.post(
           metadataPayload.modules = moduleOutputs;
         }
 
-        await db.query(
+        const [result] = (await db.query(
           `
           INSERT INTO documents (
             vector_store_file_id,
@@ -919,9 +1213,21 @@ router.post(
             metadata ? 0 : 1,
             JSON.stringify(metadataPayload),
           ],
-        );
+        )) as any[];
+
+        if (result && typeof result.insertId === 'number') {
+          documentDbId = result.insertId as number;
+        }
       } catch (err) {
         console.error('Failed to persist document metadata to DB:', err);
+      }
+
+      if (documentDbId !== null) {
+        await runTaxonomyExtractionForDocument(
+          documentDbId,
+          file.id,
+          originalname,
+        );
       }
 
       // For async uploads, kick off background classification / metadata work.
