@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Argus – Admin Taxonomies</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+          sans-serif;
+        margin: 0;
+        padding: 0;
+        background: #f3f4f6;
+      }
+      .navbar {
+        background: #111827;
+        color: #fff;
+        padding: 0.75rem 1.5rem;
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+      }
+      .navbar a {
+        color: #e5e7eb;
+        text-decoration: none;
+        font-size: 0.9rem;
+      }
+      .navbar a.active {
+        color: #ffffff;
+        font-weight: 600;
+      }
+      .container {
+        max-width: 960px;
+        margin: 2rem auto;
+        background: #ffffff;
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      }
+      .admin-subnav {
+        display: flex;
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+      }
+      .admin-subnav a {
+        font-size: 0.9rem;
+        color: #2563eb;
+        text-decoration: none;
+        padding: 0.25rem 0.6rem;
+        border-radius: 0.25rem;
+        background: #eff6ff;
+      }
+      .admin-subnav a.active {
+        background: #dbeafe;
+        font-weight: 600;
+      }
+      h1 {
+        margin-top: 0;
+        font-size: 1.5rem;
+        color: #111827;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+      }
+      th,
+      td {
+        border: 1px solid #e5e7eb;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.9rem;
+      }
+      th {
+        background: #f9fafb;
+        text-align: left;
+      }
+      button {
+        padding: 0.25rem 0.6rem;
+        font-size: 0.8rem;
+        border-radius: 0.25rem;
+        border: 1px solid #d1d5db;
+        background: #f3f4f6;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #e5e7eb;
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.6;
+      }
+      .status {
+        margin-top: 1rem;
+        font-size: 0.85rem;
+        color: #374151;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="navbar">
+      <a href="/login.html">Login</a>
+      <a href="/documents.html">Documents</a>
+      <a href="/search.html">Search</a>
+      <a href="/openai-documents.html">OpenAI</a>
+      <a href="/admin-modules.html">Admin Modules</a>
+      <a href="/admin-taxonomy.html" class="active">Admin Taxonomy</a>
+    </div>
+    <div class="container">
+      <h1>Admin – Taxonomies</h1>
+      <div class="admin-subnav">
+        <a href="/admin-modules.html">Modules</a>
+        <a href="/admin-taxonomy.html" class="active">Taxonomies</a>
+      </div>
+      <p>
+        Manage taxonomy categories. Use <strong>Rebuild</strong> for
+        projection-backed categories (vitals, smoking, mental_health,
+        sexual_history), and <strong>Re-run LLM</strong> to re-extract taxonomy
+        terms for a category using document Markdown.
+      </p>
+
+      <table id="taxonomy-table">
+        <thead>
+          <tr>
+            <th>Taxonomy</th>
+            <th>Rebuild</th>
+            <th>Re-run LLM</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+
+      <div class="status" id="status"></div>
+    </div>
+
+    <script>
+      const statusEl = document.getElementById('status');
+      const tableBody = document.querySelector('#taxonomy-table tbody');
+
+      const projectionBacked = new Set([
+        'vitals',
+        'smoking',
+        'mental_health',
+        'sexual_history',
+      ]);
+
+      async function loadTaxonomyCategories() {
+        statusEl.textContent = 'Loading taxonomy categories...';
+        tableBody.innerHTML = '';
+        try {
+          const res = await fetch('/api/search/options', {
+            credentials: 'include',
+          });
+          if (!res.ok) {
+            const text = await res.text();
+            statusEl.textContent =
+              'Failed to load taxonomies: ' + res.status + ' ' + text;
+            return;
+          }
+          const data = await res.json();
+          const cats = Array.isArray(data.taxonomyCategories)
+            ? data.taxonomyCategories
+            : [];
+
+          for (const c of cats) {
+            const tr = document.createElement('tr');
+            const label = c.label || c.id;
+            const id = c.id;
+
+            tr.innerHTML = `
+              <td>${label} (${id})</td>
+              <td>
+                <button data-taxonomy="${id}" data-action="rebuild"${
+                  projectionBacked.has(id) ? '' : ' disabled'
+                }>Rebuild</button>
+              </td>
+              <td>
+                <button data-taxonomy="${id}" data-action="llm">Re-run LLM</button>
+              </td>
+            `;
+            tableBody.appendChild(tr);
+          }
+
+          if (!cats.length) {
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            td.colSpan = 3;
+            td.textContent = 'No taxonomy categories found.';
+            tr.appendChild(td);
+            tableBody.appendChild(tr);
+          }
+
+          statusEl.textContent = 'Taxonomy categories loaded.';
+        } catch (err) {
+          statusEl.textContent =
+            'Error loading taxonomies: ' + (err && err.message ? err.message : err);
+        }
+      }
+
+      async function handleRebuild(categoryId) {
+        if (!projectionBacked.has(categoryId)) {
+          statusEl.textContent =
+            'Rebuild is only supported for projection-backed categories: vitals, smoking, mental_health, sexual_history.';
+          return;
+        }
+
+        if (
+          !window.confirm(
+            `Rebuild taxonomy terms for category "${categoryId}"? This will recompute terms based on existing projections and modules.`,
+          )
+        ) {
+          return;
+        }
+
+        statusEl.textContent = `Starting taxonomy rebuild for "${categoryId}"...`;
+        try {
+          const res = await fetch('/api/admin/taxonomy/rebuild', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include',
+            body: JSON.stringify({ categoryId }),
+          });
+          const text = await res.text();
+          let payload = null;
+          try {
+            payload = JSON.parse(text);
+          } catch {
+            // leave as raw text
+          }
+          if (!res.ok) {
+            statusEl.textContent =
+              'Taxonomy rebuild failed: ' +
+              res.status +
+              ' ' +
+              (payload && payload.error ? payload.error : text);
+            return;
+          }
+          statusEl.textContent =
+            'Taxonomy rebuild complete: ' +
+            JSON.stringify(payload, null, 2) +
+            '\n\nYou may need to refresh Search filters to see changes.';
+        } catch (err) {
+          statusEl.textContent =
+            'Error running taxonomy rebuild: ' +
+            (err && err.message ? err.message : err);
+        }
+      }
+
+      async function handleLLM(categoryId) {
+        if (
+          !window.confirm(
+            `Re-run LLM taxonomy extraction for category "${categoryId}" across documents with markdown? This will call OpenAI for each document in batches.`,
+          )
+        ) {
+          return;
+        }
+
+        statusEl.textContent = `Starting LLM taxonomy extraction for "${categoryId}"...`;
+        try {
+          const res = await fetch('/api/admin/taxonomy/extract', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include',
+            body: JSON.stringify({ categoryId }),
+          });
+          const text = await res.text();
+          let payload = null;
+          try {
+            payload = JSON.parse(text);
+          } catch {
+            // leave as raw text
+          }
+          if (!res.ok) {
+            statusEl.textContent =
+              'LLM taxonomy extraction failed: ' +
+              res.status +
+              ' ' +
+              (payload && payload.error ? payload.error : text);
+            return;
+          }
+          statusEl.textContent =
+            'LLM taxonomy extraction complete: ' +
+            JSON.stringify(payload, null, 2) +
+            '\n\nYou may need to refresh Search filters to see changes.';
+        } catch (err) {
+          statusEl.textContent =
+            'Error running LLM taxonomy extraction: ' +
+            (err && err.message ? err.message : err);
+        }
+      }
+
+      tableBody.addEventListener('click', (event) => {
+        const target = event.target;
+        if (target.tagName !== 'BUTTON') return;
+        const categoryId = target.getAttribute('data-taxonomy');
+        const action = target.getAttribute('data-action');
+        if (!categoryId || !action) return;
+        if (action === 'rebuild') {
+          void handleRebuild(categoryId);
+        } else if (action === 'llm') {
+          void handleLLM(categoryId);
+        }
+      });
+
+      void loadTaxonomyCategories();
+    </script>
+  </body>
+  </html>

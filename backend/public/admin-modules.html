@@ -36,6 +36,23 @@
         border-radius: 0.5rem;
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
       }
+      .admin-subnav {
+        display: flex;
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+      }
+      .admin-subnav a {
+        font-size: 0.9rem;
+        color: #2563eb;
+        text-decoration: none;
+        padding: 0.25rem 0.6rem;
+        border-radius: 0.25rem;
+        background: #eff6ff;
+      }
+      .admin-subnav a.active {
+        background: #dbeafe;
+        font-weight: 600;
+      }
       h1 {
         margin-top: 0;
         font-size: 1.5rem;
@@ -85,6 +102,10 @@
     </div>
     <div class="container">
       <h1>Admin – Modules</h1>
+      <div class="admin-subnav">
+        <a href="/admin-modules.html" class="active">Modules</a>
+        <a href="/admin-taxonomy.html">Taxonomies</a>
+      </div>
       <p>
         Inspect module coverage and re-run a single module across existing
         documents (using stored Markdown). Use small batches while experimenting.
@@ -106,42 +127,11 @@
       </table>
 
       <div class="status" id="status"></div>
-
-      <hr style="margin: 2rem 0; border: none; border-top: 1px solid #e5e7eb" />
-
-      <h2>Taxonomy Maintenance</h2>
-      <p>
-        Rebuild taxonomy terms for projection-backed categories (vitals,
-        smoking, mental_health, sexual_history) using current projections and
-        modules, or re-run LLM taxonomy extraction for any single category
-        (e.g., appointments). Leave the category blank to rebuild all
-        projection-backed categories.
-      </p>
-      <label for="taxonomy_category">Category</label>
-      <select id="taxonomy_category">
-        <option value="">
-          (All projection-backed categories: vitals, smoking, mental_health,
-          sexual_history)
-        </option>
-      </select>
-      <button id="taxonomy_rebuild_btn">
-        Rebuild taxonomy for selected
-      </button>
-      <button id="taxonomy_extract_btn">
-        Re-run LLM taxonomy for selected
-      </button>
     </div>
 
     <script>
       const statusEl = document.getElementById('status');
       const tableBody = document.querySelector('#modules-table tbody');
-      const taxonomySelect = document.getElementById('taxonomy_category');
-      const taxonomyRebuildBtn = document.getElementById(
-        'taxonomy_rebuild_btn',
-      );
-      const taxonomyExtractBtn = document.getElementById(
-        'taxonomy_extract_btn',
-      );
 
       async function loadStatus() {
         statusEl.textContent = 'Loading module status...';
@@ -178,29 +168,6 @@
         } catch (err) {
           statusEl.textContent =
             'Error loading status: ' + (err && err.message ? err.message : err);
-        }
-      }
-
-      async function loadTaxonomyCategories() {
-        try {
-          const res = await fetch('/api/search/options', {
-            credentials: 'include',
-          });
-          if (!res.ok) {
-            return;
-          }
-          const data = await res.json();
-          const cats = Array.isArray(data.taxonomyCategories)
-            ? data.taxonomyCategories
-            : [];
-          for (const c of cats) {
-            const opt = document.createElement('option');
-            opt.value = c.id;
-            opt.textContent = `${c.label} (${c.id})`;
-            taxonomySelect.appendChild(opt);
-          }
-        } catch {
-          // Best-effort only; safe to ignore errors here.
         }
       }
 
@@ -266,120 +233,7 @@
         }
       });
 
-      taxonomyRebuildBtn.addEventListener('click', async () => {
-        const categoryId = taxonomySelect.value || null;
-        const label = categoryId || 'all projection-backed categories';
-
-        const projectionSupported = new Set([
-          '',
-          'vitals',
-          'smoking',
-          'mental_health',
-          'sexual_history',
-        ]);
-        if (!projectionSupported.has(categoryId || '')) {
-          statusEl.textContent =
-            'Rebuild is only supported for projection-backed categories: vitals, smoking, mental_health, sexual_history. For other categories (e.g., appointments), use "Re-run LLM taxonomy for selected".';
-          return;
-        }
-        if (
-          !window.confirm(
-            `Rebuild taxonomy terms for ${label}? This will recompute terms based on existing projections and modules.`,
-          )
-        ) {
-          return;
-        }
-
-        statusEl.textContent = `Starting taxonomy rebuild for ${label}...`;
-        try {
-          const res = await fetch('/api/admin/taxonomy/rebuild', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            credentials: 'include',
-            body: JSON.stringify({ categoryId }),
-          });
-          const text = await res.text();
-          let payload = null;
-          try {
-            payload = JSON.parse(text);
-          } catch {
-            // leave as raw text
-          }
-          if (!res.ok) {
-            statusEl.textContent =
-              'Taxonomy rebuild failed: ' +
-              res.status +
-              ' ' +
-              (payload && payload.error ? payload.error : text);
-            return;
-          }
-          statusEl.textContent =
-            'Taxonomy rebuild complete: ' +
-            JSON.stringify(payload, null, 2) +
-            '\n\nYou may need to refresh Search filters to see changes.';
-        } catch (err) {
-          statusEl.textContent =
-            'Error running taxonomy rebuild: ' +
-            (err && err.message ? err.message : err);
-        }
-      });
-
-      taxonomyExtractBtn.addEventListener('click', async () => {
-        const categoryId = taxonomySelect.value || null;
-        if (!categoryId) {
-          statusEl.textContent =
-            'Please select a single category to re-run LLM taxonomy extraction.';
-          return;
-        }
-        const label = categoryId;
-        if (
-          !window.confirm(
-            `Re-run LLM taxonomy extraction for category "${label}" across documents with markdown? This will call OpenAI for each document in batches.`,
-          )
-        ) {
-          return;
-        }
-
-        statusEl.textContent = `Starting LLM taxonomy extraction for category "${label}"...`;
-        try {
-          const res = await fetch('/api/admin/taxonomy/extract', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            credentials: 'include',
-            body: JSON.stringify({ categoryId }),
-          });
-          const text = await res.text();
-          let payload = null;
-          try {
-            payload = JSON.parse(text);
-          } catch {
-            // leave as raw text
-          }
-          if (!res.ok) {
-            statusEl.textContent =
-              'LLM taxonomy extraction failed: ' +
-              res.status +
-              ' ' +
-              (payload && payload.error ? payload.error : text);
-            return;
-          }
-          statusEl.textContent =
-            'LLM taxonomy extraction complete: ' +
-            JSON.stringify(payload, null, 2) +
-            '\n\nYou may need to refresh Search filters to see changes.';
-        } catch (err) {
-          statusEl.textContent =
-            'Error running LLM taxonomy extraction: ' +
-            (err && err.message ? err.message : err);
-        }
-      });
-
       void loadStatus();
-      void loadTaxonomyCategories();
     </script>
   </body>
   </html>
