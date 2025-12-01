@@ -145,6 +145,51 @@
       a:hover {
         text-decoration: underline;
       }
+      .text-row {
+        border: 1px solid #16a34a;
+        border-radius: 4px;
+        padding: 0.4rem 0.5rem 0.5rem;
+        margin-bottom: 0.5rem;
+        background: #ecfdf5;
+        width: 40%;
+        max-width: 100%;
+      }
+      .text-row-terms {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+      .text-row-term {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+      .text-row-term-input {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      .text-row-controls {
+        margin-top: 0.4rem;
+        display: flex;
+        gap: 0.35rem;
+      }
+      .text-row-term-remove-btn {
+        padding: 0.2rem 0.45rem;
+        border-radius: 4px;
+        border: none;
+        background: #2563eb;
+        color: #ffffff;
+        cursor: pointer;
+      }
+      .text-row-remove-btn {
+        padding: 0.2rem 0.45rem;
+        border-radius: 4px;
+        border: 1px solid #16a34a;
+        background: #bbf7d0;
+        color: #166534;
+        cursor: pointer;
+      }
     </style>
   </head>
   <body>
@@ -298,30 +343,30 @@
       function createTextRow(initialTerms) {
         const rowDiv = document.createElement('div');
         rowDiv.className = 'text-row';
-        rowDiv.style.display = 'flex';
-        rowDiv.style.flexWrap = 'wrap';
-        rowDiv.style.gap = '0.35rem';
-        rowDiv.style.marginBottom = '0.35rem';
 
         const termsContainer = document.createElement('div');
         termsContainer.className = 'text-row-terms';
-        termsContainer.style.display = 'flex';
-        termsContainer.style.flexWrap = 'wrap';
-        termsContainer.style.gap = '0.35rem';
         rowDiv.appendChild(termsContainer);
 
         const controlsDiv = document.createElement('div');
-        controlsDiv.style.display = 'flex';
-        controlsDiv.style.gap = '0.35rem';
+        controlsDiv.className = 'text-row-controls';
         rowDiv.appendChild(controlsDiv);
 
         function addTermInput(value) {
+          const termRow = document.createElement('div');
+          termRow.className = 'text-row-term';
+
           const input = document.createElement('input');
           input.type = 'text';
           input.placeholder = 'term';
           if (value) input.value = value;
-          input.style.minWidth = '140px';
-          termsContainer.appendChild(input);
+          input.className = 'text-row-term-input';
+
+          termRow.appendChild(input);
+          termsContainer.appendChild(termRow);
+
+          updateTermRemoveButtonsForRow(rowDiv);
+          updateRowDeleteButtons();
         }
 
         const addTermBtn = document.createElement('button');
@@ -332,17 +377,6 @@
         });
         controlsDiv.appendChild(addTermBtn);
 
-        const removeRowBtn = document.createElement('button');
-        removeRowBtn.type = 'button';
-        removeRowBtn.textContent = '× row';
-        removeRowBtn.addEventListener('click', () => {
-          textRowsContainer.removeChild(rowDiv);
-          if (!textRowsContainer.querySelector('.text-row')) {
-            addInitialTextRow();
-          }
-        });
-        controlsDiv.appendChild(removeRowBtn);
-
         const terms = Array.isArray(initialTerms) && initialTerms.length > 0
           ? initialTerms
           : [''];
@@ -351,10 +385,80 @@
         }
 
         textRowsContainer.appendChild(rowDiv);
+        updateRowDeleteButtons();
       }
 
       function addInitialTextRow() {
         createTextRow(['']);
+      }
+
+      function updateRowDeleteButtons() {
+        const rows = textRowsContainer.querySelectorAll('.text-row');
+        rows.forEach((row, index) => {
+          const termsContainer = row.querySelector('.text-row-terms');
+          if (!termsContainer) return;
+
+          const termRows = termsContainer.querySelectorAll('.text-row-term');
+          if (termRows.length === 0) return;
+
+          // remove any existing row-level delete buttons
+          const existingRowBtns = row.querySelectorAll('.text-row-remove-btn');
+          existingRowBtns.forEach((btn) => btn.remove());
+
+          // first row should not have a green row delete button
+          if (index === 0) {
+            return;
+          }
+
+          const firstTermRow = termRows[0];
+          const removeRowBtn = document.createElement('button');
+          removeRowBtn.type = 'button';
+          removeRowBtn.textContent = '×';
+          removeRowBtn.className = 'text-row-remove-btn';
+          removeRowBtn.setAttribute('aria-label', 'Remove this row');
+          removeRowBtn.addEventListener('click', () => {
+            const allRows = textRowsContainer.querySelectorAll('.text-row');
+            if (allRows.length > 1) {
+              textRowsContainer.removeChild(row);
+              updateRowDeleteButtons();
+            }
+          });
+          firstTermRow.appendChild(removeRowBtn);
+        });
+      }
+
+      function updateTermRemoveButtonsForRow(rowDiv) {
+        const termsContainer = rowDiv.querySelector('.text-row-terms');
+        if (!termsContainer) return;
+        const termRows = termsContainer.querySelectorAll('.text-row-term');
+
+        termRows.forEach((termRow, idx) => {
+          let btn = termRow.querySelector('.text-row-term-remove-btn');
+
+          if (idx === 0) {
+            // first term in row: no blue term delete button
+            if (btn) {
+              btn.remove();
+            }
+          } else {
+            if (!btn) {
+              btn = document.createElement('button');
+              btn.type = 'button';
+              btn.textContent = '×';
+              btn.className = 'text-row-term-remove-btn';
+              btn.setAttribute('aria-label', 'Remove this term');
+              btn.addEventListener('click', () => {
+                const termsContainerInner =
+                  rowDiv.querySelector('.text-row-terms');
+                if (!termsContainerInner) return;
+                termsContainerInner.removeChild(termRow);
+                updateTermRemoveButtonsForRow(rowDiv);
+                updateRowDeleteButtons();
+              });
+              termRow.insertBefore(btn, termRow.firstChild);
+            }
+          }
+        });
       }
 
       async function loadOptions() {
