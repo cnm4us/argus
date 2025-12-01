@@ -393,6 +393,19 @@ export async function initDb(): Promise<void> {
         ('mental_health.anxiety', 'mental_health', 'Anxiety', JSON_ARRAY('anxiety', 'anxious'), 'Symptoms or diagnosis related to anxiety.', 'approved'),
         ('mental_health.depression', 'mental_health', 'Depression', JSON_ARRAY('depression', 'depressed', 'major depressive disorder'), 'Symptoms or diagnosis related to depression.', 'approved'),
         ('mental_health.substance_use_disorder', 'mental_health', 'Substance use disorder', JSON_ARRAY('substance use disorder', 'alcohol use disorder', 'drug dependence'), 'Diagnosis related to substance or alcohol use disorder.', 'approved'),
+        -- Appointments (projection-backed)
+        ('appointments.any_mention', 'appointments', 'Any appointment mention', JSON_ARRAY('appointment', 'visit scheduled', 'clinic appointment', 'follow-up visit'), 'Document contains any structured appointment data.', 'approved'),
+        -- Results (projection-backed)
+        ('results.any_mention', 'results', 'Any results mention', JSON_ARRAY('lab results', 'imaging results', 'test results', 'study results'), 'Document contains structured lab or imaging results.', 'approved'),
+        ('results.lab', 'results', 'Lab results', JSON_ARRAY('lab result', 'laboratory result', 'blood work', 'labs'), 'Document contains structured laboratory results.', 'approved'),
+        ('results.imaging', 'results', 'Imaging results', JSON_ARRAY('imaging result', 'x-ray result', 'ct scan result', 'mri result'), 'Document contains structured imaging results.', 'approved'),
+        -- Referrals (projection-backed)
+        ('referrals.any_mention', 'referrals', 'Any referral mention', JSON_ARRAY('referral', 'referred to', 'consult requested'), 'Document contains any structured referral data.', 'approved'),
+        ('referrals.denial', 'referrals', 'Referral denial', JSON_ARRAY('referral denied', 'insurance denial', 'clinical denial', 'administrative denial'), 'Document mentions a referral denial of any kind.', 'approved'),
+        -- Communication (projection-backed)
+        ('communication.any_mention', 'communication', 'Any communication mention', JSON_ARRAY('telephone encounter', 'phone call', 'message', 'communication'), 'Document contains structured communication metadata.', 'approved'),
+        ('communication.patient_initiated', 'communication', 'Patient-initiated communication', JSON_ARRAY('patient called', 'patient message', 'incoming call from patient'), 'Communication where the patient initiated contact.', 'approved'),
+        ('communication.provider_initiated', 'communication', 'Provider-initiated communication', JSON_ARRAY('provider called', 'outbound call to patient', 'clinical staff called patient'), 'Communication where the provider or clinic initiated contact.', 'approved'),
         -- Sexual history
         ('sexual_history.any_mention', 'sexual_history', 'Any sexual history mention', JSON_ARRAY('sexual history', 'sexual activity', 'sexually active', 'sexual risk', 'sexual behavior'), 'Document contains any sexual history, sexual activity, or STI risk discussion (including positive or negative history).', 'approved'),
         ('sexual_history.risky_behavior', 'sexual_history', 'Risky sexual behavior', JSON_ARRAY('risky sexual behavior', 'high-risk sexual behavior', 'unprotected sex', 'no condom use', 'condoms never', 'multiple partners', 'new sexual partner', 'new partner', 'sex work', 'transactional sex', 'partner with sti', 'partner has sti', 'partner hiv positive', 'partner with hiv'), 'Document describes sexual behavior or history that increases STI risk or indicates need for STI screening.', 'approved')

@@ -141,6 +141,10 @@
         'smoking',
         'mental_health',
         'sexual_history',
+        'appointments',
+        'results',
+        'referrals',
+        'communication',
       ]);
 
       async function loadTaxonomyCategories() {
@@ -199,7 +203,7 @@
       async function handleRebuild(categoryId) {
         if (!projectionBacked.has(categoryId)) {
           statusEl.textContent =
-            'Rebuild is only supported for projection-backed categories: vitals, smoking, mental_health, sexual_history.';
+            'Rebuild is only supported for projection-backed categories: vitals, smoking, mental_health, sexual_history, appointments, results, referrals, communication.';
           return;
         }
 

@@ -1080,7 +1080,11 @@ async function updateTaxonomyFromProjections(
             keyword_id LIKE 'vitals.%' OR
             keyword_id LIKE 'smoking.%' OR
             keyword_id LIKE 'mental_health.%' OR
-            keyword_id LIKE 'sexual_history.%'
+            keyword_id LIKE 'sexual_history.%' OR
+            keyword_id LIKE 'appointments.%' OR
+            keyword_id LIKE 'results.%' OR
+            keyword_id LIKE 'referrals.%' OR
+            keyword_id LIKE 'communication.%'
           )
       `,
       [documentId],
@@ -1647,6 +1651,253 @@ async function updateTaxonomyFromProjections(
           evidenceText: `Risky sexual behavior / STI risk inferred from sexual_health module signals: ${riskReasons.join(
             '; ',
           )}`,
+        });
+      }
+    }
+  } catch {
+    // Ignore taxonomy errors; projections remain valid.
+  }
+
+  // Appointments: tag any document with structured appointment data.
+  try {
+    const [aRows] = (await db.query(
+      `
+        SELECT
+          status,
+          appointment_date
+        FROM document_appointments
+        WHERE document_id = ?
+        ORDER BY appointment_date ASC
+        LIMIT 1
+      `,
+      [documentId],
+    )) as any[];
+
+    if (Array.isArray(aRows) && aRows.length > 0) {
+      const a = aRows[0] as any;
+      const status =
+        typeof a.status === 'string' && a.status.length > 0
+          ? (a.status as string)
+          : null;
+
+      await insertDocumentTerm({
+        connection: db,
+        documentId,
+        keywordId: 'appointments.any_mention',
+      });
+      await insertDocumentTermEvidence({
+        connection: db,
+        documentId,
+        keywordId: 'appointments.any_mention',
+        evidenceType: 'rule',
+        evidenceText: `document_appointments row present (status=${status ?? 'unknown'}).`,
+      });
+    }
+  } catch {
+    // Ignore taxonomy errors; projections remain valid.
+  }
+
+  // Results: tag documents with lab and imaging results.
+  try {
+    const [rRows] = (await db.query(
+      `
+        SELECT
+          result_type,
+          lab_category,
+          imaging_category
+        FROM document_results
+        WHERE document_id = ?
+        ORDER BY encounter_date ASC
+        LIMIT 1
+      `,
+      [documentId],
+    )) as any[];
+
+    if (Array.isArray(rRows) && rRows.length > 0) {
+      const r = rRows[0] as any;
+      const resultType =
+        typeof r.result_type === 'string' && r.result_type.length > 0
+          ? (r.result_type as string)
+          : null;
+      const labCategory =
+        typeof r.lab_category === 'string' && r.lab_category.length > 0
+          ? (r.lab_category as string)
+          : null;
+      const imagingCategory =
+        typeof r.imaging_category === 'string' &&
+        r.imaging_category.length > 0
+          ? (r.imaging_category as string)
+          : null;
+
+      await insertDocumentTerm({
+        connection: db,
+        documentId,
+        keywordId: 'results.any_mention',
+      });
+      await insertDocumentTermEvidence({
+        connection: db,
+        documentId,
+        keywordId: 'results.any_mention',
+        evidenceType: 'rule',
+        evidenceText: `document_results row present (result_type=${resultType ?? 'null'}, lab_category=${labCategory ?? 'null'}, imaging_category=${imagingCategory ?? 'null'}).`,
+      });
+
+      if (resultType === 'lab') {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'results.lab',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'results.lab',
+          evidenceType: 'rule',
+          evidenceText: `lab results present (lab_category=${labCategory ?? 'null'}).`,
+        });
+      } else if (resultType === 'imaging') {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'results.imaging',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'results.imaging',
+          evidenceType: 'rule',
+          evidenceText: `imaging results present (imaging_category=${imagingCategory ?? 'null'}).`,
+        });
+      }
+    }
+  } catch {
+    // Ignore taxonomy errors; projections remain valid.
+  }
+
+  // Referrals: tag documents with referral requests and denials.
+  try {
+    const [refRows] = (await db.query(
+      `
+        SELECT
+          has_referral_request,
+          has_referral_denial,
+          referral_specialty
+        FROM document_referrals
+        WHERE document_id = ?
+        ORDER BY encounter_date ASC
+        LIMIT 1
+      `,
+      [documentId],
+    )) as any[];
+
+    if (Array.isArray(refRows) && refRows.length > 0) {
+      const r = refRows[0] as any;
+      const hasRequest =
+        r.has_referral_request === 1 || r.has_referral_request === true;
+      const hasDenial =
+        r.has_referral_denial === 1 || r.has_referral_denial === true;
+      const specialty =
+        typeof r.referral_specialty === 'string' &&
+        r.referral_specialty.length > 0
+          ? (r.referral_specialty as string)
+          : null;
+
+      if (hasRequest) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'referrals.any_mention',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'referrals.any_mention',
+          evidenceType: 'rule',
+          evidenceText: `document_referrals row present (specialty=${specialty ?? 'null'}).`,
+        });
+      }
+
+      if (hasDenial) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'referrals.denial',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'referrals.denial',
+          evidenceType: 'rule',
+          evidenceText: 'referral denial documented (has_referral_denial=1).',
+        });
+      }
+    }
+  } catch {
+    // Ignore taxonomy errors; projections remain valid.
+  }
+
+  // Communication: tag documents with structured communication metadata.
+  try {
+    const [cRows] = (await db.query(
+      `
+        SELECT
+          initiated_by,
+          message_direction
+        FROM document_communications
+        WHERE document_id = ?
+        LIMIT 1
+      `,
+      [documentId],
+    )) as any[];
+
+    if (Array.isArray(cRows) && cRows.length > 0) {
+      const c = cRows[0] as any;
+      const initiatedBy =
+        typeof c.initiated_by === 'string' && c.initiated_by.length > 0
+          ? (c.initiated_by as string)
+          : null;
+
+      await insertDocumentTerm({
+        connection: db,
+        documentId,
+        keywordId: 'communication.any_mention',
+      });
+      await insertDocumentTermEvidence({
+        connection: db,
+        documentId,
+        keywordId: 'communication.any_mention',
+        evidenceType: 'rule',
+        evidenceText: `document_communications row present (initiated_by=${initiatedBy ?? 'null'}).`,
+      });
+
+      if (initiatedBy === 'patient') {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'communication.patient_initiated',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'communication.patient_initiated',
+          evidenceType: 'rule',
+          evidenceText: 'communication initiated_by=patient.',
+        });
+      } else if (
+        initiatedBy === 'provider' ||
+        initiatedBy === 'clinic'
+      ) {
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'communication.provider_initiated',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'communication.provider_initiated',
+          evidenceType: 'rule',
+          evidenceText: `communication initiated_by=${initiatedBy}.`,
         });
       }
     }
