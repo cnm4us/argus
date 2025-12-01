@@ -53,6 +53,11 @@
         background: #dbeafe;
         font-weight: 600;
       }
+      h1 {
+        margin-top: 0;
+        font-size: 1.5rem;
+        color: #111827;
+      }
       table {
         width: 100%;
         border-collapse: collapse;
@@ -107,9 +112,7 @@
       <a href="/documents.html">Documents</a>
       <a href="/search.html">Search</a>
       <a href="/openai-documents.html">OpenAI</a>
-      <a href="/admin-modules.html">Admin Modules</a>
-      <a href="/admin-taxonomy.html">Admin Taxonomy</a>
-      <a href="/admin-documents.html" class="active">Admin Documents</a>
+      <a href="/admin-modules.html" class="active">Admin</a>
     </div>
     <div class="container">
       <h1>Admin – Documents</h1>
@@ -169,7 +172,18 @@
               'Failed to load documents: ' + (json.error || res.status);
             return;
           }
-          allDocs = Array.isArray(json.items) ? json.items : [];
+          const rawItems = Array.isArray(json.items) ? json.items : [];
+          // Normalize items into a flat shape for easier rendering.
+          allDocs = rawItems.map((item) => {
+            const attrs = item && item.attributes ? item.attributes : {};
+            return {
+              id: item.id,
+              filename: attrs.file_name || '',
+              documentType: attrs.document_type || '',
+              date: attrs.date || '',
+              providerName: attrs.provider_name || '',
+            };
+          });
           statusEl.textContent = `Loaded ${allDocs.length} document(s).`;
           renderDocuments();
         } catch (err) {
@@ -239,4 +253,3 @@
     </script>
   </body>
   </html>
-
