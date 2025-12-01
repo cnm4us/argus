@@ -71,3 +71,32 @@ Keywords:
 # Your branch is up to date with 'origin/main'.
 -- END TEMPLATE -- 
 
+### How agents should use this template
+
+- The interactive `git commit` editor is not available to agents, so agents MUST construct commit messages non‑interactively using `git commit -m ...`.
+- When the developer asks the agent to "make a commit":
+  - The agent should run `git add` for the specific files it has changed (never `git add .` unless explicitly requested).
+  - The agent should then run a single `git commit -m "..."` command with multiple `-m` blocks to emulate the template.
+- The commit message MUST follow this structure so custom reporting tools can parse it:
+  1. **Subject line (first line)**: `<type>(<scope>): <short, imperative summary>`
+  2. **Body sections with explicit labels**:
+     - A `Subject:` section that repeats the subject line, e.g.  
+       `Subject:`  
+       `feat(search): add text CNF filters`
+     - A `Description:` section with one or more short paragraphs or bullets explaining context and approach.
+     - A `Keywords:` section with space‑separated `#tags` (e.g. `#ui #db #search`).
+- Example non‑interactive pattern the agent should use:
+
+```bash
+git commit -m "feat(search): add text CNF filters" -m "Subject:
+feat(search): add text CNF filters
+
+Description:
+- Add POST /api/search/db to support combined metadata, taxonomy, and CNF-style text filters on documents.markdown.
+- Extend the search UI with text search rows (rows = AND, boxes = OR) and wire it to the new endpoint.
+
+Keywords:
+#search #ui #text" 
+```
+
+- It is acceptable (and expected) that the agent reconstructs the template like this instead of opening the editor; the important part is that the **Subject**, **Description**, and **Keywords** labels are present and consistently formatted.

@@ -2355,6 +2355,93 @@ router.get(
   },
 );
 
+// GET /api/documents/:id/text-evidence
+// Return simple text search snippets for a given document and text rows definition.
+router.get(
+  '/:id/text-evidence',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { text } = req.query as { text?: string };
+
+      if (!text || typeof text !== 'string') {
+        res.json({ rows: [] });
+        return;
+      }
+
+      let parsed: { rows?: { terms?: string[] }[] } | null = null;
+      try {
+        parsed = JSON.parse(text) as { rows?: { terms?: string[] }[] };
+      } catch {
+        res.status(400).json({ error: 'Invalid text search payload' });
+        return;
+      }
+
+      const rowsDef = Array.isArray(parsed?.rows) ? parsed?.rows : [];
+      if (!rowsDef || rowsDef.length === 0) {
+        res.json({ rows: [] });
+        return;
+      }
+
+      const db = await getDb();
+      const [docRows] = (await db.query(
+        `
+          SELECT markdown
+          FROM documents
+          WHERE vector_store_file_id = ?
+          LIMIT 1
+        `,
+        [id],
+      )) as any[];
+
+      if (!Array.isArray(docRows) || docRows.length === 0) {
+        res.status(404).json({ error: 'Document not found in DB' });
+        return;
+      }
+
+      const markdownRaw = (docRows[0] as any).markdown as string | null;
+      const markdown = (markdownRaw ?? '').trim();
+      if (!markdown) {
+        res.json({ rows: [] });
+        return;
+      }
+
+      const lower = markdown.toLowerCase();
+
+      const snippetRows = rowsDef.map((row) => {
+        const terms = Array.isArray(row.terms) ? row.terms : [];
+        const termSnippets = terms.map((t) => {
+          const term = typeof t === 'string' ? t.trim() : '';
+          if (!term) {
+            return { term: '', snippet: null as string | null };
+          }
+          const termLower = term.toLowerCase();
+          const idx = lower.indexOf(termLower);
+          if (idx === -1) {
+            return { term, snippet: null as string | null };
+          }
+
+          const context = 60;
+          const start = Math.max(0, idx - context);
+          const end = Math.min(markdown.length, idx + term.length + context);
+          let snippet = markdown.slice(start, end);
+          snippet = snippet.replace(/\s+/g, ' ').trim();
+
+          return { term, snippet };
+        });
+
+        return { terms: termSnippets };
+      });
+
+      res.json({ rows: snippetRows });
+    } catch (error) {
+      console.error('Error in GET /api/documents/:id/text-evidence:', error);
+      res.status(500).json({ error: 'Failed to compute text evidence' });
+    }
+  },
+);
+
 // GET /api/documents/:id/taxonomy
 // Return taxonomy terms (category/keyword/subkeyword) and any stored evidence for a given document.
 router.get('/:id/taxonomy', requireAuth, async (req: Request, res: Response) => {

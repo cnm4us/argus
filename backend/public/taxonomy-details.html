@@ -84,6 +84,7 @@
       <h1>Taxonomy Details</h1>
       <div id="summary" class="summary"></div>
       <div id="terms"></div>
+      <div id="text-evidence"></div>
     </div>
 
     <script>
@@ -97,9 +98,11 @@
         const categoryId = getParam('category_id') || '';
         const keywordId = getParam('keyword_id') || '';
         const subkeywordId = getParam('subkeyword_id') || '';
+        const textParam = getParam('text');
 
         const summaryEl = document.getElementById('summary');
         const termsEl = document.getElementById('terms');
+        const textEvidenceEl = document.getElementById('text-evidence');
 
         if (!vectorStoreFileId) {
           summaryEl.textContent = 'Missing document id.';
@@ -189,6 +192,61 @@
 
             termsEl.appendChild(div);
           }
+
+          // If text search context is present, fetch and render text evidence.
+          if (textParam) {
+            try {
+              const textUrl =
+                '/api/documents/' +
+                encodeURIComponent(vectorStoreFileId) +
+                '/text-evidence?text=' +
+                encodeURIComponent(textParam);
+              const textRes = await fetch(textUrl, {
+                credentials: 'include',
+              });
+              const textJson = await textRes.json();
+              if (textRes.ok) {
+                const rows = Array.isArray(textJson.rows)
+                  ? textJson.rows
+                  : [];
+                if (rows.length > 0) {
+                  const title = document.createElement('h2');
+                  title.textContent = 'Text Search Evidence';
+                  title.style.marginTop = '1.5rem';
+                  title.style.fontSize = '1.1rem';
+                  textEvidenceEl.appendChild(title);
+
+                  rows.forEach((row, rowIndex) => {
+                    const rowDiv = document.createElement('div');
+                    rowDiv.className = 'term';
+                    const rowTitle = document.createElement('div');
+                    rowTitle.className = 'term-title';
+                    rowTitle.textContent = `Row ${rowIndex + 1} (OR terms)`;
+                    rowDiv.appendChild(rowTitle);
+
+                    const ul = document.createElement('ul');
+                    ul.className = 'evidence-list';
+                    const terms = Array.isArray(row.terms)
+                      ? row.terms
+                      : [];
+                    terms.forEach((t) => {
+                      if (!t || !t.term) return;
+                      const li = document.createElement('li');
+                      const prefix = t.snippet
+                        ? `"${t.term}" → ${t.snippet}`
+                        : `"${t.term}" → (no match in this document)`;
+                      li.textContent = prefix;
+                      ul.appendChild(li);
+                    });
+                    rowDiv.appendChild(ul);
+                    textEvidenceEl.appendChild(rowDiv);
+                  });
+                }
+              }
+            } catch (err) {
+              console.error('Error loading text evidence', err);
+            }
+          }
         } catch (err) {
           summaryEl.textContent =
             'Unexpected error loading taxonomy details. See console for details.';
@@ -200,4 +258,3 @@
     </script>
   </body>
   </html>
-

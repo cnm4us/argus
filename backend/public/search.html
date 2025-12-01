@@ -219,6 +219,15 @@
             </select>
           </div>
         </div>
+        <div class="filters-taxonomy" id="text_search_container">
+          <div style="flex: 1 1 100%">
+            <label>Text Search (rows = AND, boxes = OR)</label>
+            <div id="text_rows"></div>
+            <button type="button" id="add_text_row_btn" style="margin-top: 0.35rem">
+              + Add row
+            </button>
+          </div>
+        </div>
         <div class="filters-date-range">
           <label>Date Range</label>
           <div class="date-range-row">
@@ -271,6 +280,8 @@
       const taxonomySubkeywordSelect = document.getElementById(
         'taxonomy_subkeyword',
       );
+      const textRowsContainer = document.getElementById('text_rows');
+      const addTextRowBtn = document.getElementById('add_text_row_btn');
       let dateRangeInitialized = false;
       let currentItems = [];
       let currentSortKey = 'date';
@@ -281,6 +292,69 @@
       let lastTaxonomyCategoryId = '';
       let lastTaxonomyKeywordId = '';
       let lastTaxonomySubkeywordId = '';
+      let textRows = [];
+
+      function createTextRow(initialTerms) {
+        const rowDiv = document.createElement('div');
+        rowDiv.className = 'text-row';
+        rowDiv.style.display = 'flex';
+        rowDiv.style.flexWrap = 'wrap';
+        rowDiv.style.gap = '0.35rem';
+        rowDiv.style.marginBottom = '0.35rem';
+
+        const termsContainer = document.createElement('div');
+        termsContainer.className = 'text-row-terms';
+        termsContainer.style.display = 'flex';
+        termsContainer.style.flexWrap = 'wrap';
+        termsContainer.style.gap = '0.35rem';
+        rowDiv.appendChild(termsContainer);
+
+        const controlsDiv = document.createElement('div');
+        controlsDiv.style.display = 'flex';
+        controlsDiv.style.gap = '0.35rem';
+        rowDiv.appendChild(controlsDiv);
+
+        function addTermInput(value) {
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.placeholder = 'term';
+          if (value) input.value = value;
+          input.style.minWidth = '140px';
+          termsContainer.appendChild(input);
+        }
+
+        const addTermBtn = document.createElement('button');
+        addTermBtn.type = 'button';
+        addTermBtn.textContent = '+ term';
+        addTermBtn.addEventListener('click', () => {
+          addTermInput('');
+        });
+        controlsDiv.appendChild(addTermBtn);
+
+        const removeRowBtn = document.createElement('button');
+        removeRowBtn.type = 'button';
+        removeRowBtn.textContent = '× row';
+        removeRowBtn.addEventListener('click', () => {
+          textRowsContainer.removeChild(rowDiv);
+          if (!textRowsContainer.querySelector('.text-row')) {
+            addInitialTextRow();
+          }
+        });
+        controlsDiv.appendChild(removeRowBtn);
+
+        const terms = Array.isArray(initialTerms) && initialTerms.length > 0
+          ? initialTerms
+          : [''];
+        for (const t of terms) {
+          addTermInput(t);
+        }
+
+        textRowsContainer.appendChild(rowDiv);
+      }
+
+      function addInitialTextRow() {
+        createTextRow(['']);
+      }
 
       async function loadOptions() {
         try {
@@ -459,6 +533,14 @@
           if (categoryId) params.set('category_id', categoryId);
           if (keywordId) params.set('keyword_id', keywordId);
           if (subkeywordId) params.set('subkeyword_id', subkeywordId);
+          // Pass text search rows (if any) so the details page can compute snippets.
+          if (Array.isArray(textRows) && textRows.length > 0) {
+            try {
+              params.set('text', JSON.stringify({ rows: textRows }));
+            } catch {
+              // Ignore serialization errors; text evidence is best-effort.
+            }
+          }
           detailsLink.href = `/taxonomy-details.html?${params.toString()}`;
           detailsLink.textContent = 'Details';
           detailsTd.appendChild(detailsLink);
@@ -493,7 +575,6 @@
         const dateFrom = dateFromInput.value;
         const dateTo = dateToInput.value;
 
-        const params = new URLSearchParams();
         const taxonomyCategoryId = taxonomyCategorySelect
           ? taxonomyCategorySelect.value
           : '';
@@ -501,24 +582,44 @@
         lastTaxonomyCategoryId = taxonomyCategoryId || '';
         lastTaxonomyKeywordId = taxonomyKeywordId || '';
         lastTaxonomySubkeywordId = taxonomySubkeywordId || '';
-        if (documentType) params.set('document_type', documentType);
-        if (providerName) params.set('provider_name', providerName);
-        if (clinicOrFacility)
-          params.set('clinic_or_facility', clinicOrFacility);
-        if (taxonomyCategoryId)
-          params.set('taxonomy_category_id', taxonomyCategoryId);
-        if (taxonomyKeywordId)
-          params.set('taxonomy_keyword_id', taxonomyKeywordId);
-        if (taxonomySubkeywordId)
-          params.set('taxonomy_subkeyword_id', taxonomySubkeywordId);
-        if (dateFrom) params.set('date_from', dateFrom);
-        if (dateTo) params.set('date_to', dateTo);
 
-        const url =
-          '/api/search/db' + (params.toString() ? `?${params.toString()}` : '');
+        // Collect text search rows (rows = AND, terms in a row = OR).
+        const rows = [];
+        const rowEls = textRowsContainer.querySelectorAll('.text-row');
+        rowEls.forEach((rowEl) => {
+          const terms = [];
+          const inputs = rowEl.querySelectorAll('input[type="text"]');
+          inputs.forEach((input) => {
+            const value = input.value.trim();
+            if (value) terms.push(value);
+          });
+          if (terms.length > 0) {
+            rows.push({ terms });
+          }
+        });
+
+        textRows = rows;
+
+        const body = {
+          document_type: documentType || undefined,
+          provider_name: providerName || undefined,
+          clinic_or_facility: clinicOrFacility || undefined,
+          taxonomy_category_id: taxonomyCategoryId || undefined,
+          taxonomy_keyword_id: taxonomyKeywordId || undefined,
+          taxonomy_subkeyword_id: taxonomySubkeywordId || undefined,
+          date_from: dateFrom || undefined,
+          date_to: dateTo || undefined,
+          text: rows.length > 0 ? { rows } : undefined,
+        };
 
         try {
-          const res = await fetch(url);
+          const res = await fetch('/api/search/db', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+          });
           const json = await res.json();
 
           if (!res.ok) {
@@ -537,8 +638,20 @@
             statusEl.className = 'status-line';
           }
 
-          // Initialize date picker bounds based on available data on first load with no filters.
-          if (!dateRangeInitialized && !params.toString() && items.length > 0) {
+          // Initialize date picker bounds based on available data on first load with no filters or text search.
+          if (
+            !dateRangeInitialized &&
+            !documentType &&
+            !providerName &&
+            !clinicOrFacility &&
+            !taxonomyCategoryId &&
+            !taxonomyKeywordId &&
+            !taxonomySubkeywordId &&
+            !dateFrom &&
+            !dateTo &&
+            rows.length === 0 &&
+            items.length > 0
+          ) {
             const dates = items
               .map((item) => item.date)
               .filter((d) => typeof d === 'string' && d.length === 10);
@@ -595,8 +708,15 @@
         });
       }
 
+      if (addTextRowBtn) {
+        addTextRowBtn.addEventListener('click', () => {
+          createTextRow(['']);
+        });
+      }
+
       // Initial load: options + search with no filters.
       loadOptions();
+      addInitialTextRow();
       runSearch();
     </script>
   </body>
