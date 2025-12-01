@@ -104,12 +104,14 @@
       <a href="/openai-documents.html">OpenAI</a>
       <a href="/admin-modules.html">Admin Modules</a>
       <a href="/admin-taxonomy.html" class="active">Admin Taxonomy</a>
+      <a href="/admin-documents.html">Admin Documents</a>
     </div>
     <div class="container">
       <h1>Admin – Taxonomies</h1>
       <div class="admin-subnav">
         <a href="/admin-modules.html">Modules</a>
         <a href="/admin-taxonomy.html" class="active">Taxonomies</a>
+        <a href="/admin-documents.html">Documents</a>
       </div>
       <p>
         Manage taxonomy categories. Use <strong>Rebuild</strong> for
@@ -141,6 +143,7 @@
         'smoking',
         'mental_health',
         'sexual_history',
+        'respiratory',
         'appointments',
         'results',
         'referrals',
@@ -203,7 +206,7 @@
       async function handleRebuild(categoryId) {
         if (!projectionBacked.has(categoryId)) {
           statusEl.textContent =
-            'Rebuild is only supported for projection-backed categories: vitals, smoking, mental_health, sexual_history, appointments, results, referrals, communication.';
+            'Rebuild is only supported for projection-backed categories: vitals, smoking, mental_health, sexual_history, respiratory, appointments, results, referrals, communication.';
           return;
         }
 

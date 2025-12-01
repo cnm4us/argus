@@ -393,6 +393,9 @@ export async function initDb(): Promise<void> {
         ('mental_health.anxiety', 'mental_health', 'Anxiety', JSON_ARRAY('anxiety', 'anxious'), 'Symptoms or diagnosis related to anxiety.', 'approved'),
         ('mental_health.depression', 'mental_health', 'Depression', JSON_ARRAY('depression', 'depressed', 'major depressive disorder'), 'Symptoms or diagnosis related to depression.', 'approved'),
         ('mental_health.substance_use_disorder', 'mental_health', 'Substance use disorder', JSON_ARRAY('substance use disorder', 'alcohol use disorder', 'drug dependence'), 'Diagnosis related to substance or alcohol use disorder.', 'approved'),
+        -- Respiratory (projection-backed from vitals/results/referrals/metadata)
+        ('respiratory.any_mention', 'respiratory', 'Any respiratory mention', JSON_ARRAY('respiratory', 'shortness of breath', 'dyspnea', 'wheezing', 'respiratory failure', 'copd', 'emphysema'), 'Document contains respiratory-related findings, diagnoses, or referrals.', 'approved'),
+        ('respiratory.copd_or_emphysema', 'respiratory', 'COPD or emphysema', JSON_ARRAY('copd', 'emphysema', 'chronic obstructive pulmonary disease', 'obstructive lung disease'), 'Document mentions COPD, emphysema, or related obstructive lung disease.', 'approved'),
         -- Appointments (projection-backed)
         ('appointments.any_mention', 'appointments', 'Any appointment mention', JSON_ARRAY('appointment', 'visit scheduled', 'clinic appointment', 'follow-up visit'), 'Document contains any structured appointment data.', 'approved'),
         -- Results (projection-backed)

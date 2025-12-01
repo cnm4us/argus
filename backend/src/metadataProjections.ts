@@ -1081,6 +1081,7 @@ async function updateTaxonomyFromProjections(
             keyword_id LIKE 'smoking.%' OR
             keyword_id LIKE 'mental_health.%' OR
             keyword_id LIKE 'sexual_history.%' OR
+            keyword_id LIKE 'respiratory.%' OR
             keyword_id LIKE 'appointments.%' OR
             keyword_id LIKE 'results.%' OR
             keyword_id LIKE 'referrals.%' OR
@@ -1900,6 +1901,170 @@ async function updateTaxonomyFromProjections(
           evidenceText: `communication initiated_by=${initiatedBy}.`,
         });
       }
+    }
+  } catch {
+    // Ignore taxonomy errors; projections remain valid.
+  }
+
+  // Respiratory: tag documents with respiratory-related content based on projections and metadata.
+  try {
+    const respiratoryEvidence: string[] = [];
+    const copdEmphysemaEvidence: string[] = [];
+
+    // Vitals: low SpO2 can suggest respiratory compromise.
+    try {
+      const [vRows] = (await db.query(
+        `
+          SELECT spo2_is_low
+          FROM document_vitals
+          WHERE document_id = ?
+          LIMIT 1
+        `,
+        [documentId],
+      )) as any[];
+      if (Array.isArray(vRows) && vRows.length > 0) {
+        const v = vRows[0] as any;
+        if (v.spo2_is_low === 1) {
+          respiratoryEvidence.push('spo2_is_low=1 (possible respiratory compromise).');
+        }
+      }
+    } catch {
+      // best-effort
+    }
+
+    // Referrals: COPD/emphysema flags.
+    try {
+      const [refRows] = (await db.query(
+        `
+          SELECT
+            reason_mentions_copd,
+            reason_mentions_emphysema_or_obstructive_lung
+          FROM document_referrals
+          WHERE document_id = ?
+          ORDER BY encounter_date ASC
+          LIMIT 1
+        `,
+        [documentId],
+      )) as any[];
+
+      if (Array.isArray(refRows) && refRows.length > 0) {
+        const r = refRows[0] as any;
+        const mentionsCopd =
+          r.reason_mentions_copd === 1 || r.reason_mentions_copd === true;
+        const mentionsEmphysema =
+          r.reason_mentions_emphysema_or_obstructive_lung === 1 ||
+          r.reason_mentions_emphysema_or_obstructive_lung === true;
+
+        if (mentionsCopd) {
+          copdEmphysemaEvidence.push(
+            'referral reason mentions COPD or obstructive lung disease.',
+          );
+        }
+        if (mentionsEmphysema) {
+          copdEmphysemaEvidence.push(
+            'referral reason mentions emphysema or obstructive lung disease.',
+          );
+        }
+      }
+    } catch {
+      // best-effort
+    }
+
+    // Results: imaging categories suggesting chest/lung focus.
+    try {
+      const [rRows] = (await db.query(
+        `
+          SELECT imaging_category
+          FROM document_results
+          WHERE document_id = ?
+          ORDER BY encounter_date ASC
+          LIMIT 1
+        `,
+        [documentId],
+      )) as any[];
+
+      if (Array.isArray(rRows) && rRows.length > 0) {
+        const r = rRows[0] as any;
+        const imagingCategory =
+          typeof r.imaging_category === 'string' && r.imaging_category.length > 0
+            ? (r.imaging_category as string).toLowerCase()
+            : null;
+        if (imagingCategory) {
+          if (
+            imagingCategory.includes('chest') ||
+            imagingCategory.includes('lung') ||
+            imagingCategory.includes('pulmonary')
+          ) {
+            respiratoryEvidence.push(
+              `imaging_category suggests chest/lung focus (${imagingCategory}).`,
+            );
+          }
+        }
+      }
+    } catch {
+      // best-effort
+    }
+
+    // Metadata: conditions_discussed that mention COPD, emphysema, dyspnea, etc.
+    try {
+      const conditions = toLowerStringArray((metadata as any).conditions_discussed);
+      for (const c of conditions) {
+        if (c.includes('copd') || c.includes('emphysema')) {
+          copdEmphysemaEvidence.push(
+            `conditions_discussed includes COPD/emphysema term: "${c}".`,
+          );
+        } else if (
+          c.includes('dyspnea') ||
+          c.includes('shortness of breath') ||
+          c.includes('sob') ||
+          c.includes('wheez') ||
+          c.includes('respiratory failure') ||
+          c.includes('bronchitis') ||
+          c.includes('pneumonia')
+        ) {
+          respiratoryEvidence.push(
+            `conditions_discussed includes respiratory term: "${c}".`,
+          );
+        }
+      }
+    } catch {
+      // best-effort
+    }
+
+    const hasRespiratoryMention =
+      respiratoryEvidence.length > 0 || copdEmphysemaEvidence.length > 0;
+
+    if (hasRespiratoryMention) {
+      await insertDocumentTerm({
+        connection: db,
+        documentId,
+        keywordId: 'respiratory.any_mention',
+      });
+      await insertDocumentTermEvidence({
+        connection: db,
+        documentId,
+        keywordId: 'respiratory.any_mention',
+        evidenceType: 'rule',
+        evidenceText: `Respiratory-related content detected: ${[
+          ...respiratoryEvidence,
+          ...copdEmphysemaEvidence,
+        ].join(' ')}`,
+      });
+    }
+
+    if (copdEmphysemaEvidence.length > 0) {
+      await insertDocumentTerm({
+        connection: db,
+        documentId,
+        keywordId: 'respiratory.copd_or_emphysema',
+      });
+      await insertDocumentTermEvidence({
+        connection: db,
+        documentId,
+        keywordId: 'respiratory.copd_or_emphysema',
+        evidenceType: 'rule',
+        evidenceText: copdEmphysemaEvidence.join(' '),
+      });
     }
   } catch {
     // Ignore taxonomy errors; projections remain valid.

@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Argus – Admin Document Taxonomy</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+          sans-serif;
+        margin: 0;
+        padding: 0;
+        background: #f3f4f6;
+      }
+      .navbar {
+        background: #111827;
+        color: #fff;
+        padding: 0.75rem 1.5rem;
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+      }
+      .navbar a {
+        color: #e5e7eb;
+        text-decoration: none;
+        font-size: 0.9rem;
+      }
+      .navbar a.active {
+        color: #ffffff;
+        font-weight: 600;
+      }
+      .container {
+        max-width: 960px;
+        margin: 2rem auto;
+        background: #ffffff;
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      }
+      .admin-subnav {
+        display: flex;
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+      }
+      .admin-subnav a {
+        font-size: 0.9rem;
+        color: #2563eb;
+        text-decoration: none;
+        padding: 0.25rem 0.6rem;
+        border-radius: 0.25rem;
+        background: #eff6ff;
+      }
+      .admin-subnav a.active {
+        background: #dbeafe;
+        font-weight: 600;
+      }
+      .doc-header {
+        margin-bottom: 0.5rem;
+        font-size: 0.9rem;
+        color: #4b5563;
+      }
+      .controls-row {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        margin-bottom: 0.75rem;
+      }
+      select {
+        padding: 0.3rem 0.45rem;
+        border-radius: 0.25rem;
+        border: 1px solid #d1d5db;
+        font-size: 0.9rem;
+      }
+      button {
+        padding: 0.25rem 0.6rem;
+        font-size: 0.8rem;
+        border-radius: 0.25rem;
+        border: 1px solid #d1d5db;
+        background: #f3f4f6;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #e5e7eb;
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.6;
+      }
+      .status {
+        margin-top: 1rem;
+        font-size: 0.85rem;
+        color: #374151;
+        white-space: pre-wrap;
+      }
+      .term {
+        border-bottom: 1px solid #e5e7eb;
+        padding: 0.75rem 0;
+      }
+      .term:last-child {
+        border-bottom: none;
+      }
+      .term-title {
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+      }
+      .term-meta {
+        font-size: 0.85rem;
+        color: #6b7280;
+        margin-bottom: 0.25rem;
+      }
+      .evidence-list {
+        margin: 0.25rem 0 0 1.25rem;
+        padding: 0;
+        list-style: disc;
+        font-size: 0.9rem;
+      }
+      .evidence-list li {
+        margin-bottom: 0.15rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="navbar">
+      <a href="/login.html">Login</a>
+      <a href="/documents.html">Documents</a>
+      <a href="/search.html">Search</a>
+      <a href="/openai-documents.html">OpenAI</a>
+      <a href="/admin-modules.html">Admin Modules</a>
+      <a href="/admin-taxonomy.html">Admin Taxonomy</a>
+      <a href="/admin-documents.html">Admin Documents</a>
+    </div>
+    <div class="container">
+      <h1>Admin – Document Taxonomy</h1>
+      <div class="admin-subnav">
+        <a href="/admin-modules.html">Modules</a>
+        <a href="/admin-taxonomy.html">Taxonomies</a>
+        <a href="/admin-documents.html">Documents</a>
+      </div>
+
+      <div id="doc-header" class="doc-header"></div>
+
+      <div class="controls-row">
+        <label for="taxonomy_category">Category:</label>
+        <select id="taxonomy_category">
+          <option value="">(select a category)</option>
+        </select>
+        <button id="rebuild_btn" disabled>Rebuild (this doc)</button>
+        <button id="llm_btn" disabled>Re-run LLM (this doc)</button>
+      </div>
+
+      <div id="terms"></div>
+
+      <div class="status" id="status"></div>
+    </div>
+
+    <script>
+      function getParam(name) {
+        const params = new URLSearchParams(window.location.search);
+        return params.get(name);
+      }
+
+      const statusEl = document.getElementById('status');
+      const docHeaderEl = document.getElementById('doc-header');
+      const termsEl = document.getElementById('terms');
+      const taxonomySelect = document.getElementById('taxonomy_category');
+      const rebuildBtn = document.getElementById('rebuild_btn');
+      const llmBtn = document.getElementById('llm_btn');
+
+      const projectionBacked = new Set([
+        'vitals',
+        'smoking',
+        'mental_health',
+        'sexual_history',
+        'respiratory',
+        'appointments',
+        'results',
+        'referrals',
+        'communication',
+      ]);
+
+      async function loadTaxonomyCategories() {
+        try {
+          const res = await fetch('/api/search/options', {
+            credentials: 'include',
+          });
+          if (!res.ok) {
+            return;
+          }
+          const data = await res.json();
+          const cats = Array.isArray(data.taxonomyCategories)
+            ? data.taxonomyCategories
+            : [];
+          for (const c of cats) {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = `${c.label} (${c.id})`;
+            taxonomySelect.appendChild(opt);
+          }
+        } catch {
+          // best-effort
+        }
+      }
+
+      async function loadDocumentTaxonomy() {
+        const id = getParam('id');
+        if (!id) {
+          statusEl.textContent = 'Missing document id.';
+          return;
+        }
+
+        const params = new URLSearchParams();
+        const categoryId = taxonomySelect.value || '';
+        if (categoryId) params.set('category_id', categoryId);
+
+        statusEl.textContent = 'Loading taxonomy terms...';
+        termsEl.innerHTML = '';
+
+        try {
+          const url =
+            '/api/documents/' +
+            encodeURIComponent(id) +
+            '/taxonomy' +
+            (params.toString() ? `?${params.toString()}` : '');
+          const res = await fetch(url, { credentials: 'include' });
+          const json = await res.json();
+          if (!res.ok) {
+            statusEl.textContent =
+              'Failed to load taxonomy: ' + (json.error || res.status);
+            return;
+          }
+
+          const terms = Array.isArray(json.terms) ? json.terms : [];
+
+          if (!terms.length) {
+            termsEl.textContent =
+              'No taxonomy terms found for this document and selection.';
+          } else {
+            for (const term of terms) {
+              const div = document.createElement('div');
+              div.className = 'term';
+
+              const title = document.createElement('div');
+              title.className = 'term-title';
+              title.textContent = [
+                term.categoryLabel || term.categoryId || '(no category)',
+                term.keywordLabel || term.keywordId || '(no keyword)',
+                term.subkeywordLabel || term.subkeywordId || '',
+              ]
+                .filter(Boolean)
+                .join(' → ');
+              div.appendChild(title);
+
+              const meta = document.createElement('div');
+              meta.className = 'term-meta';
+              meta.textContent = [
+                term.categoryId ? `category_id=${term.categoryId}` : null,
+                term.keywordId ? `keyword_id=${term.keywordId}` : null,
+                term.subkeywordId ? `subkeyword_id=${term.subkeywordId}` : null,
+              ]
+                .filter(Boolean)
+                .join(' | ');
+              div.appendChild(meta);
+
+              const evidence = Array.isArray(term.evidence)
+                ? term.evidence
+                : [];
+              if (evidence.length > 0) {
+                const ul = document.createElement('ul');
+                ul.className = 'evidence-list';
+                for (const ev of evidence) {
+                  const li = document.createElement('li');
+                  const prefix = ev.evidenceType
+                    ? `[${ev.evidenceType}] `
+                    : '';
+                  li.textContent = prefix + ev.evidenceText;
+                  ul.appendChild(li);
+                }
+                div.appendChild(ul);
+              }
+
+              termsEl.appendChild(div);
+            }
+          }
+
+          statusEl.textContent = 'Taxonomy terms loaded.';
+        } catch (err) {
+          statusEl.textContent =
+            'Error loading taxonomy: ' + (err && err.message ? err.message : err);
+        }
+      }
+
+      async function loadDocumentHeader() {
+        const id = getParam('id');
+        if (!id) return;
+        try {
+          const res = await fetch(`/api/documents/${encodeURIComponent(id)}/metadata/db`, {
+            credentials: 'include',
+          });
+          const json = await res.json();
+          if (!res.ok) return;
+          const metadata = json.metadata || {};
+          const fileName =
+            metadata.file_name || metadata.fileId || '(unknown file)';
+          const docType = metadata.document_type || '(unknown type)';
+          const date = metadata.date || '';
+          docHeaderEl.textContent = `Document: ${fileName} | Type: ${docType}${
+            date ? ' | Date: ' + date : ''
+          }`;
+        } catch {
+          // best-effort
+        }
+      }
+
+      taxonomySelect.addEventListener('change', () => {
+        const cat = taxonomySelect.value || '';
+        rebuildBtn.disabled = !cat || !projectionBacked.has(cat);
+        llmBtn.disabled = !cat;
+        void loadDocumentTaxonomy();
+      });
+
+      rebuildBtn.addEventListener('click', async () => {
+        const id = getParam('id');
+        const categoryId = taxonomySelect.value || '';
+        if (!id || !categoryId) return;
+        if (!projectionBacked.has(categoryId)) {
+          statusEl.textContent =
+            'Rebuild is only supported for projection-backed categories: vitals, smoking, mental_health, sexual_history, respiratory, appointments, results, referrals, communication.';
+          return;
+        }
+        if (
+          !window.confirm(
+            `Rebuild taxonomy for category "${categoryId}" on this document? This will recompute projection-backed terms for this doc and category (and related categories).`,
+          )
+        ) {
+          return;
+        }
+
+        statusEl.textContent = `Rebuilding taxonomy for "${categoryId}" on this document...`;
+        try {
+          const res = await fetch(
+            `/api/admin/documents/${encodeURIComponent(
+              id,
+            )}/taxonomy/rebuild`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              credentials: 'include',
+              body: JSON.stringify({ categoryId }),
+            },
+          );
+          const text = await res.text();
+          let payload = null;
+          try {
+            payload = JSON.parse(text);
+          } catch {
+            // ignore
+          }
+          if (!res.ok) {
+            statusEl.textContent =
+              'Per-document taxonomy rebuild failed: ' +
+              res.status +
+              ' ' +
+              (payload && payload.error ? payload.error : text);
+            return;
+          }
+          statusEl.textContent =
+            'Per-document taxonomy rebuild complete: ' +
+            JSON.stringify(payload, null, 2);
+          void loadDocumentTaxonomy();
+        } catch (err) {
+          statusEl.textContent =
+            'Error rebuilding taxonomy: ' +
+            (err && err.message ? err.message : err);
+        }
+      });
+
+      llmBtn.addEventListener('click', async () => {
+        const id = getParam('id');
+        const categoryId = taxonomySelect.value || '';
+        if (!id || !categoryId) return;
+        if (
+          !window.confirm(
+            `Re-run LLM taxonomy extraction for category "${categoryId}" on this document only?`,
+          )
+        ) {
+          return;
+        }
+
+        statusEl.textContent = `Re-running LLM taxonomy for "${categoryId}" on this document...`;
+        try {
+          const res = await fetch(
+            `/api/admin/documents/${encodeURIComponent(
+              id,
+            )}/taxonomy/extract`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              credentials: 'include',
+              body: JSON.stringify({ categoryId }),
+            },
+          );
+          const text = await res.text();
+          let payload = null;
+          try {
+            payload = JSON.parse(text);
+          } catch {
+            // ignore
+          }
+          if (!res.ok) {
+            statusEl.textContent =
+              'Per-document LLM taxonomy extraction failed: ' +
+              res.status +
+              ' ' +
+              (payload && payload.error ? payload.error : text);
+            return;
+          }
+          statusEl.textContent =
+            'Per-document LLM taxonomy extraction complete: ' +
+            JSON.stringify(payload, null, 2);
+          void loadDocumentTaxonomy();
+        } catch (err) {
+          statusEl.textContent =
+            'Error re-running LLM taxonomy: ' +
+            (err && err.message ? err.message : err);
+        }
+      });
+
+      void loadTaxonomyCategories();
+      void loadDocumentHeader();
+      void loadDocumentTaxonomy();
+    </script>
+  </body>
+  </html>
+

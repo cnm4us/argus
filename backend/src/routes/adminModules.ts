@@ -492,4 +492,290 @@ router.post(
   },
 );
 
+// POST /api/admin/documents/:id/modules/rebuild
+// Body: { module: ModuleName }
+// Re-run a single module for a single document (identified by vector_store_file_id).
+router.post(
+  '/documents/:id/modules/rebuild',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { module } = req.body as { module?: string };
+
+      if (!module || !KNOWN_MODULES.find((m) => m.name === module)) {
+        res.status(400).json({ error: 'Invalid or missing module name' });
+        return;
+      }
+
+      const db = await getDb();
+      const [rows] = (await db.query(
+        `
+          SELECT id, filename, markdown, metadata_json
+          FROM documents
+          WHERE vector_store_file_id = ?
+          LIMIT 1
+        `,
+        [id],
+      )) as any[];
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        res.status(404).json({ error: 'Document not found in DB' });
+        return;
+      }
+
+      const row = rows[0] as any;
+      const documentId = row.id as number;
+      const fileName = (row.filename as string) ?? 'document.pdf';
+      const markdown = ((row.markdown as string | null) ?? '').trim();
+
+      if (!markdown) {
+        res.status(400).json({
+          error:
+            'Markdown content is not available for this document; cannot re-run module.',
+        });
+        return;
+      }
+
+      let metadata = row.metadata_json;
+      if (typeof metadata === 'string') {
+        try {
+          metadata = JSON.parse(metadata);
+        } catch {
+          metadata = {};
+        }
+      }
+      if (!metadata || typeof metadata !== 'object') {
+        metadata = {};
+      }
+
+      const output = await runSingleModuleFromMarkdown(
+        module as ModuleName,
+        markdown,
+        fileName,
+      );
+
+      if (!output) {
+        res
+          .status(500)
+          .json({ error: 'Module extraction returned no output for this document' });
+        return;
+      }
+
+      const metadataObj: any = metadata;
+      metadataObj.modules = metadataObj.modules || {};
+      metadataObj.modules[module as ModuleName] = output;
+
+      await db.query(
+        `
+          UPDATE documents
+          SET
+            metadata_json = ?,
+            needs_metadata = 0
+          WHERE id = ?
+        `,
+        [JSON.stringify(metadataObj), documentId],
+      );
+
+      await updateDocumentProjectionsForVectorStoreFile(id, metadataObj);
+
+      res.json({
+        module,
+        documentId,
+        vectorStoreFileId: id,
+        ok: true,
+      });
+    } catch (error) {
+      console.error(
+        'Error in POST /api/admin/documents/:id/modules/rebuild:',
+        error,
+      );
+      res
+        .status(500)
+        .json({ error: 'Failed to re-run module for this document' });
+    }
+  },
+);
+
+// POST /api/admin/documents/:id/taxonomy/rebuild
+// Body: { categoryId: string }
+// Rebuild projection-backed taxonomy for a single document and category.
+router.post(
+  '/documents/:id/taxonomy/rebuild',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { categoryId } = req.body as { categoryId?: string };
+
+      if (!categoryId || !categoryId.trim()) {
+        res
+          .status(400)
+          .json({ error: 'categoryId is required for per-document taxonomy rebuild' });
+        return;
+      }
+
+      const db = await getDb();
+
+      // Resolve document_id and ensure document exists.
+      const [rows] = (await db.query(
+        `
+          SELECT id
+          FROM documents
+          WHERE vector_store_file_id = ?
+          LIMIT 1
+        `,
+        [id],
+      )) as any[];
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        res.status(404).json({ error: 'Document not found in DB' });
+        return;
+      }
+
+      const documentId = (rows[0] as any).id as number;
+
+      // Clear document_terms and evidence for this document + category.
+      await db.query(
+        `
+          DELETE dt
+          FROM document_terms dt
+          LEFT JOIN taxonomy_keywords tk ON tk.id = dt.keyword_id
+          LEFT JOIN taxonomy_subkeywords ts ON ts.id = dt.subkeyword_id
+          LEFT JOIN taxonomy_keywords tk2 ON tk2.id = ts.keyword_id
+          WHERE dt.document_id = ? AND (tk.category_id = ? OR tk2.category_id = ?)
+        `,
+        [documentId, categoryId, categoryId],
+      );
+
+      await db.query(
+        `
+          DELETE e
+          FROM document_term_evidence e
+          LEFT JOIN taxonomy_keywords tk ON tk.id = e.keyword_id
+          LEFT JOIN taxonomy_subkeywords ts ON ts.id = e.subkeyword_id
+          LEFT JOIN taxonomy_keywords tk2 ON tk2.id = ts.keyword_id
+          WHERE e.document_id = ? AND (tk.category_id = ? OR tk2.category_id = ?)
+        `,
+        [documentId, categoryId, categoryId],
+      );
+
+      // Recompute projections + projection-backed taxonomy for this document.
+      await updateDocumentProjectionsForVectorStoreFile(id, null);
+
+      res.json({
+        categoryId,
+        documentId,
+        vectorStoreFileId: id,
+        ok: true,
+      });
+    } catch (error) {
+      console.error(
+        'Error in POST /api/admin/documents/:id/taxonomy/rebuild:',
+        error,
+      );
+      res
+        .status(500)
+        .json({ error: 'Failed to rebuild taxonomy for this document' });
+    }
+  },
+);
+
+// POST /api/admin/documents/:id/taxonomy/extract
+// Body: { categoryId: string }
+// Re-run LLM taxonomy extraction for a single document and category.
+router.post(
+  '/documents/:id/taxonomy/extract',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { categoryId } = req.body as { categoryId?: string };
+
+      if (!categoryId || !categoryId.trim()) {
+        res
+          .status(400)
+          .json({ error: 'categoryId is required for per-document taxonomy extract' });
+        return;
+      }
+
+      const db = await getDb();
+      const [rows] = (await db.query(
+        `
+          SELECT id, filename, markdown
+          FROM documents
+          WHERE vector_store_file_id = ?
+          LIMIT 1
+        `,
+        [id],
+      )) as any[];
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        res.status(404).json({ error: 'Document not found in DB' });
+        return;
+      }
+
+      const row = rows[0] as any;
+      const documentId = row.id as number;
+      const fileName = (row.filename as string) ?? 'document.pdf';
+      const markdown = ((row.markdown as string | null) ?? '').trim();
+
+      if (!markdown) {
+        res.status(400).json({
+          error:
+            'Markdown content is not available for this document; cannot re-run LLM taxonomy.',
+        });
+        return;
+      }
+
+      // Clear existing terms and evidence for this document + category.
+      await db.query(
+        `
+          DELETE dt
+          FROM document_terms dt
+          LEFT JOIN taxonomy_keywords tk ON tk.id = dt.keyword_id
+          LEFT JOIN taxonomy_subkeywords ts ON ts.id = dt.subkeyword_id
+          LEFT JOIN taxonomy_keywords tk2 ON tk2.id = ts.keyword_id
+          WHERE dt.document_id = ? AND (tk.category_id = ? OR tk2.category_id = ?)
+        `,
+        [documentId, categoryId, categoryId],
+      );
+
+      await db.query(
+        `
+          DELETE e
+          FROM document_term_evidence e
+          LEFT JOIN taxonomy_keywords tk ON tk.id = e.keyword_id
+          LEFT JOIN taxonomy_subkeywords ts ON ts.id = e.subkeyword_id
+          LEFT JOIN taxonomy_keywords tk2 ON tk2.id = ts.keyword_id
+          WHERE e.document_id = ? AND (tk.category_id = ? OR tk2.category_id = ?)
+        `,
+        [documentId, categoryId, categoryId],
+      );
+
+      await runTaxonomyExtractionForDocument(
+        documentId,
+        markdown,
+        fileName,
+        categoryId,
+      );
+
+      res.json({
+        categoryId,
+        documentId,
+        vectorStoreFileId: id,
+        ok: true,
+      });
+    } catch (error) {
+      console.error(
+        'Error in POST /api/admin/documents/:id/taxonomy/extract:',
+        error,
+      );
+      res
+        .status(500)
+        .json({ error: 'Failed to re-run LLM taxonomy for this document' });
+    }
+  },
+);
+
 export default router;
