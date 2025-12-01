@@ -16,7 +16,7 @@
 ## Active work in this thread
 
 - Initial setup: reread `agents/README.md` and latest handoff (`handoff_06.md`), then created this `handoff_07.md` file.
-- Documented per-document module + taxonomy iteration flow in root `README.md` for tightening/refining module taxonomies on a single file via Admin Documents → Modules... / Taxonomies....
+- Commit `docs(readme): document per-document admin iteration` – documented per-document module + taxonomy iteration flow in root `README.md` for tightening/refining module taxonomies on a single file via Admin Documents → Modules... / Taxonomies.... Keywords: #docs #admin #taxonomy.
 
 ## Notes for next agent
 
