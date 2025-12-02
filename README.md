@@ -245,6 +245,12 @@ The Search UI (`/search.html`) is backed by the local DB:
   - **Rows = AND**, **boxes in a row = OR** (CNF).
   - Results show both taxonomy evidence and text‑search snippets in the Details view.
 
+Saved text searches:
+
+- The Text Search section supports named, saved text-only queries that are persisted in the DB.
+- Saved searches are stored in `saved_text_searches` and exposed via `GET/POST/DELETE /api/search/saved`.
+- Selecting a saved search repopulates the text rows and re-runs the query; other filters (Documents/Encounters/Dates) remain transient and can be layered on afterward.
+
 ## Admin tools: when and what to run
 
 There are two main admin pages:
