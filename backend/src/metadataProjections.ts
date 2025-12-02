@@ -943,6 +943,104 @@ async function upsertDocumentResults(
   );
 }
 
+async function upsertDocumentAppointments(
+  db: mysql.Pool,
+  documentId: number,
+  encounterDate: Date | string | null,
+  metadata: any,
+): Promise<void> {
+  const encounterDateValue = normalizeDate(encounterDate);
+
+  await db.query('DELETE FROM document_appointments WHERE document_id = ?', [
+    documentId,
+  ]);
+
+  const followUpRaw = (metadata as any).follow_up_recommended;
+  const followUpTimeframeRaw = (metadata as any).follow_up_timeframe;
+  const followUpRecommended =
+    typeof followUpRaw === 'string' ? followUpRaw.trim().toLowerCase() : '';
+  const followUpTimeframe =
+    typeof followUpTimeframeRaw === 'string'
+      ? followUpTimeframeRaw.trim()
+      : '';
+
+  const riskFlags = (metadata as any).risk_flags ?? {};
+  const docQuality = (metadata as any).document_quality_flags ?? {};
+
+  const missedFollowUp =
+    riskFlags && riskFlags.missed_follow_up === true ? true : false;
+  const urgentRecommendation =
+    riskFlags && riskFlags.urgent_recommendation === true ? true : false;
+  const explicitFollowUpPlan =
+    docQuality && docQuality.explicit_follow_up_plan === true ? true : false;
+
+  const reasons: string[] = [];
+
+  if (followUpRecommended) {
+    reasons.push(`follow_up_recommended=${followUpRecommended}`);
+  }
+  if (followUpTimeframe) {
+    reasons.push(`follow_up_timeframe=${followUpTimeframe}`);
+  }
+  if (missedFollowUp) {
+    reasons.push('missed_follow_up=true');
+  }
+  if (urgentRecommendation) {
+    reasons.push('urgent_recommendation=true');
+  }
+  if (explicitFollowUpPlan) {
+    reasons.push('explicit_follow_up_plan=true');
+  }
+
+  if (reasons.length === 0) {
+    return;
+  }
+
+  let status:
+    | 'scheduled'
+    | 'no_show'
+    | 'canceled'
+    | 'rescheduled'
+    | 'completed'
+    | 'unknown'
+    | null = null;
+
+  if (missedFollowUp) {
+    status = 'no_show';
+  } else if (
+    followUpRecommended &&
+    followUpRecommended !== 'no' &&
+    followUpRecommended !== 'none'
+  ) {
+    status = 'scheduled';
+  } else {
+    status = 'unknown';
+  }
+
+  const reasonText = reasons.join('; ');
+
+  await db.query(
+    `
+      INSERT INTO document_appointments (
+        document_id,
+        appointment_date,
+        status,
+        source,
+        related_specialty,
+        reason_text
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `,
+    [
+      documentId,
+      encounterDateValue,
+      status,
+      'encounter_metadata',
+      null,
+      reasonText,
+    ],
+  );
+}
+
 async function upsertDocumentCommunications(
   db: mysql.Pool,
   documentId: number,
@@ -1076,6 +1174,7 @@ async function updateTaxonomyFromProjections(
       `
         DELETE FROM document_term_evidence
         WHERE document_id = ?
+          AND evidence_type = 'rule'
           AND (
             keyword_id LIKE 'vitals.%' OR
             keyword_id LIKE 'smoking.%' OR
@@ -1345,6 +1444,11 @@ async function updateTaxonomyFromProjections(
       `
         SELECT
           has_mental_health_content,
+          affect_labile,
+          behavior_emotionally_distressed,
+          behavior_non_compliant,
+          behavior_guarded_or_hostile,
+          pressured_speech,
           symptom_anxiety,
           symptom_depression,
           dx_anxiety_disorder,
@@ -1362,6 +1466,18 @@ async function updateTaxonomyFromProjections(
       const hasContent =
         m.has_mental_health_content === 1 ||
         m.has_mental_health_content === true;
+
+      const hasPresentation =
+        m.affect_labile === 1 ||
+        m.affect_labile === true ||
+        m.behavior_emotionally_distressed === 1 ||
+        m.behavior_emotionally_distressed === true ||
+        m.behavior_non_compliant === 1 ||
+        m.behavior_non_compliant === true ||
+        m.behavior_guarded_or_hostile === 1 ||
+        m.behavior_guarded_or_hostile === true ||
+        m.pressured_speech === 1 ||
+        m.pressured_speech === true;
 
       const hasAnxiety =
         m.symptom_anxiety === 1 ||
@@ -1391,6 +1507,41 @@ async function updateTaxonomyFromProjections(
           keywordId: 'mental_health.any_mention',
           evidenceType: 'rule',
           evidenceText: 'has_mental_health_content=1 (document_mental_health.has_mental_health_content).',
+        });
+      }
+
+      if (hasPresentation) {
+        const bits: string[] = [];
+        if (m.affect_labile) {
+          bits.push('affect_labile=1');
+        }
+        if (m.behavior_emotionally_distressed) {
+          bits.push('behavior_emotionally_distressed=1');
+        }
+        if (m.behavior_non_compliant) {
+          bits.push('behavior_non_compliant=1');
+        }
+        if (m.behavior_guarded_or_hostile) {
+          bits.push('behavior_guarded_or_hostile=1');
+        }
+        if (m.pressured_speech) {
+          bits.push('pressured_speech=1');
+        }
+
+        await insertDocumentTerm({
+          connection: db,
+          documentId,
+          keywordId: 'mental_health.presentation',
+        });
+        await insertDocumentTermEvidence({
+          connection: db,
+          documentId,
+          keywordId: 'mental_health.presentation',
+          evidenceType: 'rule',
+          evidenceText:
+            bits.length > 0
+              ? `mental health presentation flags present (${bits.join(', ')}).`
+              : 'mental health presentation flags present.',
         });
       }
 
@@ -2109,6 +2260,7 @@ export async function updateDocumentProjectionsForVectorStoreFile(
   await upsertDocumentMentalHealth(db, documentId, encounterDate, metadata);
   await upsertDocumentReferrals(db, documentId, encounterDate, metadata);
   await upsertDocumentResults(db, documentId, encounterDate, metadata);
+  await upsertDocumentAppointments(db, documentId, encounterDate, metadata);
   await upsertDocumentCommunications(db, documentId, encounterDate, metadata);
   await updateTaxonomyFromProjections(db, documentId, metadata);
 }

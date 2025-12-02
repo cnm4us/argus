@@ -97,6 +97,21 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
           // Hide internal "any_mention" keywords from the facet dropdown; the
           // "Any mention" behavior is driven by category-only filters instead.
           .filter((kw) => !kw.id.endsWith('.any_mention'))
+          // For Mental Health, hide legacy granular medication/presentation keywords
+          // that are being normalized into canonical ids.
+          .filter((kw) => {
+            if (kw.categoryId !== 'mental_health') return true;
+            const legacyIds = new Set([
+              'mental_health.antidepressant_medication',
+              'mental_health.antidepressant_medication_use',
+              'mental_health.emotionally_labile',
+              'mental_health.pressured_speech',
+              'mental_health.combative_or_hostile',
+              'mental_health.emotionally_distressed',
+              'mental_health.non_compliant',
+            ]);
+            return !legacyIds.has(kw.id);
+          })
       : [];
 
     const taxonomySubkeywords = Array.isArray(taxonomySubkeywordRows)

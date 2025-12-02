@@ -347,6 +347,15 @@ export async function runTaxonomyExtractionForDocument(
           'You MUST NOT modify or delete existing taxonomy entries; only add. ' +
           "Be conservative and avoid creating redundant concepts. Respond ONLY with valid JSON that matches the expected shape.";
 
+        let categorySpecificNotes = '';
+        if (category.id === 'mental_health') {
+          categorySpecificNotes =
+            '\n\nMENTAL HEALTH CATEGORY SPECIAL RULES:\n' +
+            '- Use the canonical keyword "mental_health.medication_for_mental_health" for medication taken or prescribed primarily for mental health (e.g., antidepressants, antipsychotics, mood stabilizers). Do NOT create new keywords for individual drug names.\n' +
+            '- Use the canonical keyword "mental_health.presentation" for observed mental health presentation during the encounter (affect, behavior, and speech), including emotionally labile affect, pressured speech, combative/hostile or guarded behavior, emotionally distressed, non-compliant, etc.\n' +
+            '- Avoid inventing new mental_health.* keywords for medication or behavior concepts that clearly fit one of these canonical keywords. Prefer subkeywords under the canonical keywords if you need more detail.\n';
+        }
+
         const userPrompt =
           'CATEGORIES (fixed list, for reference only):\n' +
           JSON.stringify(categoriesOverview) +
@@ -366,6 +375,7 @@ export async function runTaxonomyExtractionForDocument(
               })),
             })),
           }) +
+          categorySpecificNotes +
           '\n\n' +
           'TASK:\n' +
           `1) Identify concepts in the attached document that belong under the "${category.label}" category.\n` +
