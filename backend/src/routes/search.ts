@@ -15,6 +15,14 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
   try {
     const db = await getDb();
 
+    const [docTypeRows] = (await db.query(
+      `
+        SELECT document_type, COUNT(*) AS count
+        FROM documents
+        GROUP BY document_type
+      `,
+    )) as any[];
+
     const [providerRows] = (await db.query(
       `
         SELECT DISTINCT provider_name
@@ -43,14 +51,23 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
 
     const [taxonomyKeywordRows] = (await db.query(
       `
-        SELECT k.id, k.category_id, k.label
+        SELECT
+          k.id,
+          k.category_id,
+          k.label,
+          (
+            SELECT COUNT(*)
+            FROM document_terms dt
+            JOIN documents d ON d.id = dt.document_id
+            WHERE dt.keyword_id = k.id
+          ) AS doc_count
         FROM taxonomy_keywords k
         WHERE
           k.status IN ('approved','review')
           AND EXISTS (
             SELECT 1
-            FROM document_terms dt
-            WHERE dt.keyword_id = k.id
+            FROM document_terms dt2
+            WHERE dt2.keyword_id = k.id
           )
         ORDER BY k.label ASC
       `,
@@ -58,15 +75,19 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
 
     const [taxonomySubkeywordRows] = (await db.query(
       `
-        SELECT s.id, s.keyword_id, s.label
+        SELECT
+          s.id,
+          s.keyword_id,
+          s.label,
+          (
+            SELECT COUNT(*)
+            FROM document_terms dt
+            JOIN documents d ON d.id = dt.document_id
+            WHERE dt.subkeyword_id = s.id
+          ) AS doc_count
         FROM taxonomy_subkeywords s
         WHERE
           s.status IN ('approved','review')
-          AND EXISTS (
-            SELECT 1
-            FROM document_terms dt
-            WHERE dt.subkeyword_id = s.id
-          )
         ORDER BY s.label ASC
       `,
     )) as any[];
@@ -78,6 +99,15 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
       ? (clinicRows as any[]).map(
           (row) => row.clinic_or_facility as string,
         )
+      : [];
+
+    const documentTypes = Array.isArray(docTypeRows)
+      ? (docTypeRows as any[])
+          .map((row) => ({
+            id: row.document_type as string,
+            count: Number(row.count ?? 0),
+          }))
+          .filter((dt) => isKnownDocumentType(dt.id))
       : [];
 
     const taxonomyCategories = Array.isArray(taxonomyCategoryRows)
@@ -93,6 +123,7 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
             id: row.id as string,
             categoryId: row.category_id as string,
             label: row.label as string,
+            docCount: Number(row.doc_count ?? 0),
           }))
           // Hide internal "any_mention" keywords from the facet dropdown; the
           // "Any mention" behavior is driven by category-only filters instead.
@@ -119,12 +150,14 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
           id: row.id as string,
           keywordId: row.keyword_id as string,
           label: row.label as string,
+          docCount: Number(row.doc_count ?? 0),
         }))
       : [];
 
     res.json({
       providers,
       clinics,
+      documentTypes,
       taxonomyCategories,
       taxonomyKeywords,
       taxonomySubkeywords,
