@@ -8,6 +8,7 @@
 ## Implementation Notes
 - Commit `feat(search): persist saved text searches` – added `saved_text_searches` table to DB init, implemented `GET/POST/DELETE /api/search/saved` in `backend/src/routes/search.ts`, and wired `/search.html` to support naming, saving, applying, and deleting text-only Saved Searches (rows = AND, terms = OR) while leaving Documents/Encounters/Dates as transient filters. Keywords: #search #ui #db #agents.
 - Commit `docs(search): document saved text searches` – updated `README.md` search section to mention the `saved_text_searches` table, `/api/search/saved` endpoints, and how saved text-only queries interact with other filters. Keywords: #docs #search.
+- Commit `feat(ui): collapsible filters and saved searches layout` – made the Documents/Encounters/Text Search/Date Range sections on `/search.html` collapsible with large toggle arrows, persisted open/closed state per section in `localStorage`, and restructured the Text Search box so the Rows/terms UI is in a tight left column while Saved Searches controls sit in a right column. Keywords: #ui #search.
 
 ## Open Questions / Deferred Tasks
 - (Carry forward any new unresolved items from this thread as they arise.)
