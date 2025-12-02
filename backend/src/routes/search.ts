@@ -9,6 +9,17 @@ type TextSearchRow = {
   terms: string[];
 };
 
+function buildSqlRegexForTerm(termRaw: string): string | null {
+  const normalized = termRaw.trim().replace(/\s+/g, ' ');
+  if (!normalized) return null;
+  const parts = normalized.split(' ');
+  const escapedParts = parts.map((p) =>
+    p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+  );
+  // Use POSIX [:space:] so MySQL REGEXP treats any whitespace between words as a match.
+  return escapedParts.join('[[:space:]]+');
+}
+
 // GET /api/search/options
 // Return distinct provider_name, clinic_or_facility, and taxonomy values to populate filters.
 router.get('/options', requireAuth, async (_req: Request, res: Response) => {
@@ -384,8 +395,12 @@ router.post('/db', requireAuth, async (req: Request, res: Response) => {
       for (const rowTerms of normalizedRows) {
         const orParts: string[] = [];
         for (const term of rowTerms) {
-          orParts.push('LOWER(d.markdown) LIKE ?');
-          params.push(`%${term.toLowerCase()}%`);
+          const pattern = buildSqlRegexForTerm(term.toLowerCase());
+          if (!pattern) continue;
+          orParts.push(
+            "LOWER(REPLACE(REPLACE(d.markdown, '#', ''), '**', '')) REGEXP ?",
+          );
+          params.push(pattern);
         }
         if (orParts.length > 0) {
           where.push(`(${orParts.join(' OR ')})`);

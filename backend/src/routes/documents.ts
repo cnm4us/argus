@@ -2417,7 +2417,24 @@ router.get(
         return;
       }
 
-      const lower = markdown.toLowerCase();
+      const searchText = markdown
+        .replace(/#/g, '')
+        .replace(/\*\*/g, '');
+
+      const buildJsRegexForTerm = (termRaw: string): RegExp | null => {
+        const normalized = termRaw.trim().replace(/\s+/g, ' ');
+        if (!normalized) return null;
+        const parts = normalized.split(' ');
+        const escapedParts = parts.map((p) =>
+          p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+        );
+        const pattern = escapedParts.join('\\s+');
+        try {
+          return new RegExp(pattern, 'i');
+        } catch {
+          return null;
+        }
+      };
 
       const snippetRows = rowsDef.map((row) => {
         const terms = Array.isArray(row.terms) ? row.terms : [];
@@ -2426,16 +2443,24 @@ router.get(
           if (!term) {
             return { term: '', snippet: null as string | null };
           }
-          const termLower = term.toLowerCase();
-          const idx = lower.indexOf(termLower);
-          if (idx === -1) {
+
+          const regex = buildJsRegexForTerm(term);
+          if (!regex) {
             return { term, snippet: null as string | null };
           }
 
+          const match = regex.exec(searchText);
+          if (!match || typeof match.index !== 'number') {
+            return { term, snippet: null as string | null };
+          }
+
+          const matchIndex = match.index;
+          const matchLength = match[0]?.length ?? term.length;
+
           const context = 60;
-          const start = Math.max(0, idx - context);
-          const end = Math.min(markdown.length, idx + term.length + context);
-          let snippet = markdown.slice(start, end);
+          const start = Math.max(0, matchIndex - context);
+          const end = Math.min(searchText.length, matchIndex + matchLength + context);
+          let snippet = searchText.slice(start, end);
           snippet = snippet.replace(/\s+/g, ' ').trim();
 
           return { term, snippet };
