@@ -42,7 +42,7 @@
       .filters {
         display: flex;
         flex-direction: column;
-        gap: 0.75rem;
+        gap: 0.5rem;
         margin-bottom: 0.75rem;
       }
       .filter-group {
@@ -51,13 +51,31 @@
         padding: 0.75rem 0.9rem;
         background: #f9fafb;
       }
+      .filter-group-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.1rem;
+      }
       .filter-group-title {
         font-size: 0.85rem;
         font-weight: 600;
         color: #374151;
-        margin-bottom: 0.5rem;
         text-transform: uppercase;
         letter-spacing: 0.03em;
+      }
+      .filter-group-toggle {
+        background: transparent;
+        border: none;
+        color: #374151;
+        padding: 0.1rem 0.25rem;
+        cursor: pointer;
+        font-size: 1.4rem;
+        line-height: 1;
+      }
+      .filter-group-toggle:focus-visible {
+        outline: 2px solid #2563eb;
+        outline-offset: 1px;
       }
       .filter-group-row {
         display: flex;
@@ -236,12 +254,27 @@
       </p>
 
       <div class="filters">
-        <div class="filter-group">
-          <div class="filter-group-title">Documents</div>
-          <div class="filter-group-row">
-            <div>
-              <label for="document_type">Document Type</label>
-              <select id="document_type" name="document_type">
+        <div class="filter-group" id="section_documents">
+          <div class="filter-group-header">
+            <div class="filter-group-title">Documents</div>
+            <button
+              type="button"
+              class="filter-group-toggle"
+              data-section="documents"
+              aria-expanded="false"
+              aria-controls="section_documents_content"
+            >
+              ▸
+            </button>
+          </div>
+          <div
+            class="filter-group-content"
+            id="section_documents_content"
+          >
+            <div class="filter-group-row">
+              <div>
+                <label for="document_type">Document Type</label>
+                <select id="document_type" name="document_type">
                 <option value="">Any</option>
                 <option value="unclassified">unclassified</option>
                 <option value="office_visit">office_visit</option>
@@ -264,71 +297,133 @@
                 </option>
                 <option value="legal_document">legal_document</option>
               </select>
-            </div>
-            <div>
-              <label for="provider_name">Provider Name</label>
-              <select id="provider_name" name="provider_name">
-                <option value="">Any</option>
-              </select>
-            </div>
-            <div>
-              <label for="clinic_or_facility">Clinic or Facility</label>
-              <select id="clinic_or_facility" name="clinic_or_facility">
-                <option value="">Any</option>
-              </select>
-            </div>
-          </div>
-        </div>
-        <div class="filter-group">
-          <div class="filter-group-title">Encounters</div>
-          <div class="filters-taxonomy">
-            <div>
-              <label for="taxonomy_category">Category</label>
-              <select id="taxonomy_category" name="taxonomy_category">
-                <option value="">Any</option>
-              </select>
-            </div>
-            <div>
-              <label for="taxonomy_keyword">Keyword</label>
-              <select id="taxonomy_keyword" name="taxonomy_keyword">
-                <option value="">Any</option>
-              </select>
-            </div>
-            <div>
-              <label for="taxonomy_subkeyword">Subkeyword</label>
-              <select id="taxonomy_subkeyword" name="taxonomy_subkeyword">
-                <option value="">Any</option>
-              </select>
+              </div>
+              <div>
+                <label for="provider_name">Provider Name</label>
+                <select id="provider_name" name="provider_name">
+                  <option value="">Any</option>
+                </select>
+              </div>
+              <div>
+                <label for="clinic_or_facility">Clinic or Facility</label>
+                <select id="clinic_or_facility" name="clinic_or_facility">
+                  <option value="">Any</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
-        <div class="filter-group">
-          <div class="filter-group-title">Text Search</div>
-          <div class="filters-taxonomy" id="text_search_container">
-            <div style="flex: 1 1 100%">
+        <div class="filter-group" id="section_encounters">
+          <div class="filter-group-header">
+            <div class="filter-group-title">Encounters</div>
+            <button
+              type="button"
+              class="filter-group-toggle"
+              data-section="encounters"
+              aria-expanded="false"
+              aria-controls="section_encounters_content"
+            >
+              ▸
+            </button>
+          </div>
+          <div
+            class="filter-group-content"
+            id="section_encounters_content"
+          >
+            <div class="filters-taxonomy">
+              <div>
+                <label for="taxonomy_category">Category</label>
+                <select id="taxonomy_category" name="taxonomy_category">
+                  <option value="">Any</option>
+                </select>
+              </div>
+              <div>
+                <label for="taxonomy_keyword">Keyword</label>
+                <select id="taxonomy_keyword" name="taxonomy_keyword">
+                  <option value="">Any</option>
+                </select>
+              </div>
+              <div>
+                <label for="taxonomy_subkeyword">Subkeyword</label>
+                <select id="taxonomy_subkeyword" name="taxonomy_subkeyword">
+                  <option value="">Any</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="filter-group" id="section_text">
+          <div class="filter-group-header">
+            <div class="filter-group-title">Text Search</div>
+            <button
+              type="button"
+              class="filter-group-toggle"
+              data-section="text"
+              aria-expanded="false"
+              aria-controls="section_text_content"
+            >
+              ▸
+            </button>
+          </div>
+          <div
+            class="filter-group-content"
+            id="section_text_content"
+          >
+            <div class="filters-taxonomy" id="text_search_container">
               <div
                 style="
-                  display: flex;
-                  justify-content: space-between;
-                  align-items: center;
-                  gap: 0.75rem;
-                  margin-bottom: 0.25rem;
+                  flex: 1 1 0;
+                  min-width: 0;
                 "
               >
-                <label style="margin-bottom: 0">
+                <label style="margin-bottom: 0.25rem; display: block">
                   Rows (rows = AND, boxes = OR)
                 </label>
-                <div style="flex: 0 0 auto; display: flex; gap: 0.35rem">
-                  <label for="saved_search_select" style="margin-bottom: 0">
-                    Saved:
-                  </label>
-                  <select
-                    id="saved_search_select"
-                    name="saved_search_select"
-                    style="max-width: 220px"
-                  >
-                    <option value="">Select saved search…</option>
-                  </select>
+                <div id="text_rows"></div>
+                <button
+                  type="button"
+                  id="add_text_row_btn"
+                  style="margin-top: 0.35rem"
+                >
+                  + Add row
+                </button>
+                <div
+                  id="text_search_message"
+                  style="margin-top: 0.25rem; font-size: 0.8rem; color: #b91c1c"
+                ></div>
+              </div>
+              <div
+                style="
+                  flex: 0 0 260px;
+                  max-width: 320px;
+                  display: flex;
+                  flex-direction: column;
+                  align-items: flex-start;
+                  margin-top: 0.1rem;
+                "
+              >
+                <label
+                  for="saved_search_select"
+                  style="margin-bottom: 0.15rem"
+                >
+                  Saved Searches
+                </label>
+                <select
+                  id="saved_search_select"
+                  name="saved_search_select"
+                  style="width: 100%"
+                >
+                  <option value="">Select saved search…</option>
+                </select>
+                <div
+                  style="
+                    display: flex;
+                    justify-content: flex-end;
+                    gap: 0.35rem;
+                    width: 100%;
+                    margin-top: 0.25rem;
+                  "
+                >
                   <button
                     type="button"
                     id="save_search_btn"
@@ -346,32 +441,36 @@
                   </button>
                 </div>
               </div>
-              <div id="text_rows"></div>
-              <button
-                type="button"
-                id="add_text_row_btn"
-                style="margin-top: 0.35rem"
-              >
-                + Add row
-              </button>
-              <div
-                id="text_search_message"
-                style="margin-top: 0.25rem; font-size: 0.8rem; color: #b91c1c"
-              ></div>
             </div>
           </div>
         </div>
-        <div class="filter-group">
-          <div class="filter-group-title">Date Range</div>
-          <div class="filters-date-range">
-            <div class="date-range-row">
-              <div>
-                <label for="date_from">From</label>
-                <input id="date_from" type="date" />
-              </div>
-              <div>
-                <label for="date_to">To</label>
-                <input id="date_to" type="date" />
+        <div class="filter-group" id="section_dates">
+          <div class="filter-group-header">
+            <div class="filter-group-title">Date Range</div>
+            <button
+              type="button"
+              class="filter-group-toggle"
+              data-section="dates"
+              aria-expanded="false"
+              aria-controls="section_dates_content"
+            >
+              ▸
+            </button>
+          </div>
+          <div
+            class="filter-group-content"
+            id="section_dates_content"
+          >
+            <div class="filters-date-range">
+              <div class="date-range-row">
+                <div>
+                  <label for="date_from">From</label>
+                  <input id="date_from" type="date" />
+                </div>
+                <div>
+                  <label for="date_to">To</label>
+                  <input id="date_to" type="date" />
+                </div>
               </div>
             </div>
           </div>
@@ -500,6 +599,7 @@
         'save_search_confirm_btn',
       );
       const addTextRowBtn = document.getElementById('add_text_row_btn');
+      const SECTION_STATE_STORAGE_KEY = 'argus.search.sectionState';
       let dateRangeInitialized = false;
       let currentItems = [];
       let currentSortKey = 'date';
@@ -517,6 +617,57 @@
       function clearTextSearchMessage() {
         if (textSearchMessage) {
           textSearchMessage.textContent = '';
+        }
+      }
+
+      function loadSectionStateFromStorage() {
+        try {
+          const raw = window.localStorage.getItem(
+            SECTION_STATE_STORAGE_KEY,
+          );
+          if (!raw) {
+            return null;
+          }
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== 'object') return null;
+          return parsed;
+        } catch {
+          return null;
+        }
+      }
+
+      function saveSectionStateToStorage(state) {
+        try {
+          window.localStorage.setItem(
+            SECTION_STATE_STORAGE_KEY,
+            JSON.stringify(state),
+          );
+        } catch {
+          // Ignore storage errors.
+        }
+      }
+
+      function applySectionOpenState(sectionKey, isOpen, stateObj) {
+        const container = document.getElementById(
+          `section_${sectionKey}`,
+        );
+        if (!container) return;
+        const content = container.querySelector('.filter-group-content');
+        const toggle = container.querySelector('.filter-group-toggle');
+        if (!content || !toggle) return;
+
+        if (isOpen) {
+          content.style.display = '';
+          toggle.textContent = '▾';
+          toggle.setAttribute('aria-expanded', 'true');
+        } else {
+          content.style.display = 'none';
+          toggle.textContent = '▸';
+          toggle.setAttribute('aria-expanded', 'false');
+        }
+
+        if (stateObj && typeof stateObj === 'object') {
+          stateObj[sectionKey] = !!isOpen;
         }
       }
 
@@ -1152,6 +1303,38 @@
           createTextRow(['']);
         });
       }
+
+      (function initSectionToggles() {
+        const defaultState = {
+          documents: false,
+          encounters: false,
+          text: false,
+          dates: false,
+        };
+        const stored = loadSectionStateFromStorage();
+        const state =
+          stored && typeof stored === 'object'
+            ? { ...defaultState, ...stored }
+            : { ...defaultState };
+
+        const sectionKeys = ['documents', 'encounters', 'text', 'dates'];
+
+        for (const key of sectionKeys) {
+          applySectionOpenState(key, !!state[key], state);
+        }
+
+        const toggles = document.querySelectorAll('.filter-group-toggle');
+        toggles.forEach((btn) => {
+          const sectionKey = btn.getAttribute('data-section');
+          if (!sectionKey) return;
+          btn.addEventListener('click', () => {
+            const currentOpen = !!state[sectionKey];
+            const nextOpen = !currentOpen;
+            applySectionOpenState(sectionKey, nextOpen, state);
+            saveSectionStateToStorage(state);
+          });
+        });
+      })();
 
       if (saveSearchBtn) {
         saveSearchBtn.addEventListener('click', () => {
