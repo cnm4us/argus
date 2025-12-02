@@ -40,25 +40,44 @@
         margin-top: 0;
       }
       .filters {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 0.75rem 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
         margin-bottom: 0.75rem;
       }
-      .filters > div {
-        min-width: 0;
+      .filter-group {
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        padding: 0.75rem 0.9rem;
+        background: #f9fafb;
       }
-      .filters-date-range {
-        grid-column: 1 / -1;
+      .filter-group-title {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 0.5rem;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      .filter-group-row {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+      .filter-group-row > div {
+        flex: 1 1 0;
+        min-width: 180px;
       }
       .filters-taxonomy {
-        grid-column: 1 / -1;
         display: flex;
         gap: 0.75rem;
       }
       .filters-taxonomy > div {
         flex: 1;
         min-width: 0;
+      }
+      .filters-date-range {
+        margin-top: 0.25rem;
       }
       .date-range-row {
         display: flex;
@@ -207,83 +226,96 @@
       </p>
 
       <div class="filters">
-        <div>
-          <label for="document_type">Document Type</label>
-          <select id="document_type" name="document_type">
-            <option value="">Any</option>
-            <option value="unclassified">unclassified</option>
-            <option value="office_visit">office_visit</option>
-            <option value="telehealth_visit">telehealth_visit</option>
-            <option value="telephone_encounter">telephone_encounter</option>
-            <option value="medication_refill">medication_refill</option>
-            <option value="imaging_report">imaging_report</option>
-            <option value="lab_result">lab_result</option>
-            <option value="procedure_note">procedure_note</option>
-            <option value="referral">referral</option>
-            <option value="patient_message">patient_message</option>
-            <option value="provider_message">provider_message</option>
-            <option value="triage_note">triage_note</option>
-            <option value="emergency_room_note">emergency_room_note</option>
-            <option value="hospitalization_note">hospitalization_note</option>
-            <option value="discharge_summary">discharge_summary</option>
-            <option value="care_plan">care_plan</option>
-            <option value="external_specialist_note">
-              external_specialist_note
-            </option>
-            <option value="legal_document">legal_document</option>
-          </select>
-        </div>
-        <div>
-          <label for="provider_name">Provider Name</label>
-          <select id="provider_name" name="provider_name">
-            <option value="">Any</option>
-          </select>
-        </div>
-        <div>
-          <label for="clinic_or_facility">Clinic or Facility</label>
-          <select id="clinic_or_facility" name="clinic_or_facility">
-            <option value="">Any</option>
-          </select>
-        </div>
-        <div class="filters-taxonomy">
-          <div>
-            <label for="taxonomy_category">Category</label>
-            <select id="taxonomy_category" name="taxonomy_category">
-              <option value="">Any</option>
-            </select>
-          </div>
-          <div>
-            <label for="taxonomy_keyword">Keyword</label>
-            <select id="taxonomy_keyword" name="taxonomy_keyword">
-              <option value="">Any</option>
-            </select>
-          </div>
-          <div>
-            <label for="taxonomy_subkeyword">Subkeyword</label>
-            <select id="taxonomy_subkeyword" name="taxonomy_subkeyword">
-              <option value="">Any</option>
-            </select>
-          </div>
-        </div>
-        <div class="filters-taxonomy" id="text_search_container">
-          <div style="flex: 1 1 100%">
-            <label>Text Search (rows = AND, boxes = OR)</label>
-            <div id="text_rows"></div>
-            <button type="button" id="add_text_row_btn" style="margin-top: 0.35rem">
-              + Add row
-            </button>
-          </div>
-        </div>
-        <div class="filters-date-range">
-          <label>Date Range</label>
-          <div class="date-range-row">
+        <div class="filter-group">
+          <div class="filter-group-title">Documents</div>
+          <div class="filter-group-row">
             <div>
-              <label for="date_from">From</label>
-              <input id="date_from" type="date" />
+              <label for="document_type">Document Type</label>
+              <select id="document_type" name="document_type">
+                <option value="">Any</option>
+                <option value="unclassified">unclassified</option>
+                <option value="office_visit">office_visit</option>
+                <option value="telehealth_visit">telehealth_visit</option>
+                <option value="telephone_encounter">telephone_encounter</option>
+                <option value="medication_refill">medication_refill</option>
+                <option value="imaging_report">imaging_report</option>
+                <option value="lab_result">lab_result</option>
+                <option value="procedure_note">procedure_note</option>
+                <option value="referral">referral</option>
+                <option value="patient_message">patient_message</option>
+                <option value="provider_message">provider_message</option>
+                <option value="triage_note">triage_note</option>
+                <option value="emergency_room_note">emergency_room_note</option>
+                <option value="hospitalization_note">hospitalization_note</option>
+                <option value="discharge_summary">discharge_summary</option>
+                <option value="care_plan">care_plan</option>
+                <option value="external_specialist_note">
+                  external_specialist_note
+                </option>
+                <option value="legal_document">legal_document</option>
+              </select>
             </div>
             <div>
-              <label for="date_to">To</label>
-              <input id="date_to" type="date" />
+              <label for="provider_name">Provider Name</label>
+              <select id="provider_name" name="provider_name">
+                <option value="">Any</option>
+              </select>
+            </div>
+            <div>
+              <label for="clinic_or_facility">Clinic or Facility</label>
+              <select id="clinic_or_facility" name="clinic_or_facility">
+                <option value="">Any</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="filter-group">
+          <div class="filter-group-title">Encounters</div>
+          <div class="filters-taxonomy">
+            <div>
+              <label for="taxonomy_category">Category</label>
+              <select id="taxonomy_category" name="taxonomy_category">
+                <option value="">Any</option>
+              </select>
+            </div>
+            <div>
+              <label for="taxonomy_keyword">Keyword</label>
+              <select id="taxonomy_keyword" name="taxonomy_keyword">
+                <option value="">Any</option>
+              </select>
+            </div>
+            <div>
+              <label for="taxonomy_subkeyword">Subkeyword</label>
+              <select id="taxonomy_subkeyword" name="taxonomy_subkeyword">
+                <option value="">Any</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="filter-group">
+          <div class="filter-group-title">Text Search</div>
+          <div class="filters-taxonomy" id="text_search_container">
+            <div style="flex: 1 1 100%">
+              <label>Rows (rows = AND, boxes = OR)</label>
+              <div id="text_rows"></div>
+              <button type="button" id="add_text_row_btn" style="margin-top: 0.35rem">
+                + Add row
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="filter-group">
+          <div class="filter-group-title">Date Range</div>
+          <div class="filters-date-range">
+            <div class="date-range-row">
+              <div>
+                <label for="date_from">From</label>
+                <input id="date_from" type="date" />
+              </div>
+              <div>
+                <label for="date_to">To</label>
+                <input id="date_to" type="date" />
+              </div>
             </div>
           </div>
         </div>
