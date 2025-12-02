@@ -179,6 +179,167 @@ router.get('/options', requireAuth, async (_req: Request, res: Response) => {
   }
 });
 
+// GET /api/search/saved
+// Return all saved text searches (shared, single logical user).
+router.get('/saved', requireAuth, async (_req: Request, res: Response) => {
+  try {
+    const db = await getDb();
+    const [rows] = (await db.query(
+      `
+        SELECT id, name, query_json
+        FROM saved_text_searches
+        ORDER BY name ASC, id ASC
+      `,
+    )) as any[];
+
+    const items = Array.isArray(rows)
+      ? (rows as any[]).map((row) => {
+          const raw = row.query_json;
+          let parsed: any = null;
+          if (typeof raw === 'string') {
+            try {
+              parsed = JSON.parse(raw);
+            } catch {
+              parsed = null;
+            }
+          } else if (raw && typeof raw === 'object') {
+            parsed = raw;
+          }
+
+          const parsedRowsRaw = parsed && Array.isArray(parsed.rows)
+            ? parsed.rows
+            : [];
+
+          const rowsNormalized: TextSearchRow[] = parsedRowsRaw
+            .map((r: any) => {
+              const terms =
+                r && Array.isArray(r.terms)
+                  ? r.terms
+                      .map((t: any) =>
+                        typeof t === 'string' ? t.trim() : '',
+                      )
+                      .filter((t: string) => t.length > 0)
+                  : [];
+              return { terms };
+            })
+            .filter((r: TextSearchRow) => r.terms.length > 0);
+
+          return {
+            id: row.id as number,
+            name: row.name as string,
+            text: { rows: rowsNormalized },
+          };
+        })
+      : [];
+
+    res.json({ items });
+  } catch (error) {
+    console.error('Error in GET /api/search/saved:', error);
+    res.status(500).json({ error: 'Failed to load saved searches' });
+  }
+});
+
+// POST /api/search/saved
+// JSON body:
+// {
+//   name: string;
+//   text: { rows?: { terms?: string[] }[] };
+// }
+router.post('/saved', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const body = req.body as {
+      name?: string;
+      text?: { rows?: TextSearchRow[] };
+    };
+
+    const name = (body.name || '').trim();
+    if (!name) {
+      res.status(400).json({ error: 'Name is required.' });
+      return;
+    }
+
+    const inputRows = body.text?.rows ?? [];
+    const normalizedRows: TextSearchRow[] = [];
+
+    for (const row of inputRows) {
+      if (!row || !Array.isArray(row.terms)) continue;
+      const terms = row.terms
+        .map((t) => (typeof t === 'string' ? t.trim() : ''))
+        .filter((t) => t.length > 0);
+      if (terms.length > 0) {
+        normalizedRows.push({ terms });
+      }
+    }
+
+    if (normalizedRows.length === 0) {
+      res
+        .status(400)
+        .json({ error: 'At least one non-empty term is required.' });
+      return;
+    }
+
+    const db = await getDb();
+    const queryJson = JSON.stringify({ rows: normalizedRows });
+
+    const [result] = (await db.query(
+      `
+        INSERT INTO saved_text_searches (name, query_json)
+        VALUES (?, ?)
+      `,
+      [name, queryJson],
+    )) as any[];
+
+    const insertId =
+      result && typeof result.insertId === 'number' ? result.insertId : null;
+
+    res.status(201).json({
+      id: insertId,
+      name,
+      text: { rows: normalizedRows },
+    });
+  } catch (error: any) {
+    console.error('Error in POST /api/search/saved:', error);
+    if (error && error.code === 'ER_DUP_ENTRY') {
+      res
+        .status(409)
+        .json({ error: 'A saved search with this name already exists.' });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to save search.' });
+  }
+});
+
+// DELETE /api/search/saved/:id
+// Delete a saved text search by id.
+router.delete(
+  '/saved/:id',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const idParam = req.params.id;
+      const id = Number.parseInt(idParam, 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        res.status(400).json({ error: 'Invalid saved search id.' });
+        return;
+      }
+
+      const db = await getDb();
+      await db.query(
+        `
+          DELETE FROM saved_text_searches
+          WHERE id = ?
+        `,
+        [id],
+      );
+
+      res.status(204).send();
+    } catch (error) {
+      console.error('Error in DELETE /api/search/saved/:id:', error);
+      res.status(500).json({ error: 'Failed to delete saved search.' });
+    }
+  },
+);
+
 // GET /api/search/db
 // Simple DB-backed search over the documents table using basic filters.
 // Query params:

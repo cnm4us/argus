@@ -306,11 +306,58 @@
           <div class="filter-group-title">Text Search</div>
           <div class="filters-taxonomy" id="text_search_container">
             <div style="flex: 1 1 100%">
-              <label>Rows (rows = AND, boxes = OR)</label>
+              <div
+                style="
+                  display: flex;
+                  justify-content: space-between;
+                  align-items: center;
+                  gap: 0.75rem;
+                  margin-bottom: 0.25rem;
+                "
+              >
+                <label style="margin-bottom: 0">
+                  Rows (rows = AND, boxes = OR)
+                </label>
+                <div style="flex: 0 0 auto; display: flex; gap: 0.35rem">
+                  <label for="saved_search_select" style="margin-bottom: 0">
+                    Saved:
+                  </label>
+                  <select
+                    id="saved_search_select"
+                    name="saved_search_select"
+                    style="max-width: 220px"
+                  >
+                    <option value="">Select saved search…</option>
+                  </select>
+                  <button
+                    type="button"
+                    id="save_search_btn"
+                    style="padding: 0.35rem 0.6rem"
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    id="delete_saved_search_btn"
+                    style="padding: 0.35rem 0.6rem; background: #b91c1c"
+                    disabled
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
               <div id="text_rows"></div>
-              <button type="button" id="add_text_row_btn" style="margin-top: 0.35rem">
+              <button
+                type="button"
+                id="add_text_row_btn"
+                style="margin-top: 0.35rem"
+              >
                 + Add row
               </button>
+              <div
+                id="text_search_message"
+                style="margin-top: 0.25rem; font-size: 0.8rem; color: #b91c1c"
+              ></div>
             </div>
           </div>
         </div>
@@ -353,6 +400,71 @@
       </table>
     </div>
 
+    <div
+      id="save_search_modal_backdrop"
+      style="
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.3);
+        z-index: 40;
+      "
+    >
+      <div
+        id="save_search_modal"
+        style="
+          background: #ffffff;
+          border-radius: 6px;
+          max-width: 320px;
+          margin: 10% auto;
+          padding: 1rem 1.25rem;
+          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+        "
+      >
+        <h2 style="margin-top: 0; margin-bottom: 0.5rem; font-size: 1rem">
+          Save search
+        </h2>
+        <label
+          for="save_search_name"
+          style="display: block; font-size: 0.85rem; font-weight: 500"
+        >
+          Name
+        </label>
+        <input
+          id="save_search_name"
+          type="text"
+          style="
+            width: 100%;
+            margin-top: 0.25rem;
+            padding: 0.35rem 0.5rem;
+            border-radius: 4px;
+            border: 1px solid #d1d5db;
+            font: inherit;
+          "
+        />
+        <div
+          id="save_search_error"
+          style="
+            margin-top: 0.35rem;
+            font-size: 0.8rem;
+            min-height: 1em;
+            color: #b91c1c;
+          "
+        ></div>
+        <div
+          style="
+            margin-top: 0.75rem;
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.5rem;
+          "
+        >
+          <button type="button" id="save_search_cancel_btn">Exit</button>
+          <button type="button" id="save_search_confirm_btn">Save</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       const searchBtn = document.getElementById('search-btn');
       const statusEl = document.getElementById('status');
@@ -370,6 +482,23 @@
         'taxonomy_subkeyword',
       );
       const textRowsContainer = document.getElementById('text_rows');
+      const savedSearchSelect = document.getElementById('saved_search_select');
+      const textSearchMessage = document.getElementById('text_search_message');
+      const saveSearchBtn = document.getElementById('save_search_btn');
+      const deleteSavedSearchBtn = document.getElementById(
+        'delete_saved_search_btn',
+      );
+      const saveSearchBackdrop = document.getElementById(
+        'save_search_modal_backdrop',
+      );
+      const saveSearchNameInput = document.getElementById('save_search_name');
+      const saveSearchError = document.getElementById('save_search_error');
+      const saveSearchCancelBtn = document.getElementById(
+        'save_search_cancel_btn',
+      );
+      const saveSearchConfirmBtn = document.getElementById(
+        'save_search_confirm_btn',
+      );
       const addTextRowBtn = document.getElementById('add_text_row_btn');
       let dateRangeInitialized = false;
       let currentItems = [];
@@ -382,6 +511,14 @@
       let lastTaxonomyKeywordId = '';
       let lastTaxonomySubkeywordId = '';
       let textRows = [];
+      let savedSearches = [];
+      let pendingSaveRows = null;
+
+      function clearTextSearchMessage() {
+        if (textSearchMessage) {
+          textSearchMessage.textContent = '';
+        }
+      }
 
       function createTextRow(initialTerms) {
         const rowDiv = document.createElement('div');
@@ -502,6 +639,136 @@
             }
           }
         });
+      }
+
+      async function loadSavedSearches() {
+        if (!savedSearchSelect) return;
+        try {
+          const res = await fetch('/api/search/saved');
+          const json = await res.json();
+          if (!res.ok) {
+            console.error(
+              'Failed to load saved searches:',
+              json && json.error ? json.error : res.status,
+            );
+            return;
+          }
+
+          savedSearches = Array.isArray(json.items) ? json.items : [];
+
+          const prevValue = savedSearchSelect.value;
+
+          savedSearchSelect.innerHTML = '';
+          const placeholder = document.createElement('option');
+          placeholder.value = '';
+          placeholder.textContent = 'Select saved search…';
+          savedSearchSelect.appendChild(placeholder);
+
+          for (const item of savedSearches) {
+            if (!item || !item.id || !item.name) continue;
+            const opt = document.createElement('option');
+            opt.value = String(item.id);
+            opt.textContent = item.name;
+            savedSearchSelect.appendChild(opt);
+          }
+
+          if (
+            prevValue &&
+            Array.from(savedSearchSelect.options).some(
+              (opt) => opt.value === prevValue,
+            )
+          ) {
+            savedSearchSelect.value = prevValue;
+          } else {
+            savedSearchSelect.value = '';
+          }
+
+          if (deleteSavedSearchBtn) {
+            deleteSavedSearchBtn.disabled = !savedSearchSelect.value;
+          }
+        } catch (err) {
+          console.error('Error loading saved searches', err);
+        }
+      }
+
+      function clearNonTextFiltersToDefaults() {
+        if (documentTypeSelect) {
+          documentTypeSelect.value = '';
+        }
+        if (providerSelect) {
+          providerSelect.value = '';
+        }
+        if (clinicSelect) {
+          clinicSelect.value = '';
+        }
+        if (taxonomyCategorySelect) {
+          taxonomyCategorySelect.value = '';
+        }
+        if (taxonomyKeywordSelect) {
+          taxonomyKeywordSelect.value = '';
+        }
+        if (taxonomySubkeywordSelect) {
+          taxonomySubkeywordSelect.value = '';
+        }
+        if (dateFromInput) {
+          dateFromInput.value = '';
+        }
+        if (dateToInput) {
+          dateToInput.value = '';
+        }
+        lastTaxonomyCategoryId = '';
+        lastTaxonomyKeywordId = '';
+        lastTaxonomySubkeywordId = '';
+      }
+
+      function setTextRowsFromSaved(textConfig) {
+        const rows = textConfig && Array.isArray(textConfig.rows)
+          ? textConfig.rows
+          : [];
+
+        textRowsContainer.innerHTML = '';
+
+        if (!rows.length) {
+          addInitialTextRow();
+          textRows = [];
+          return;
+        }
+
+        const normalized = [];
+        for (const row of rows) {
+          if (!row || !Array.isArray(row.terms)) continue;
+          const terms = row.terms
+            .map((t) => (typeof t === 'string' ? t.trim() : ''))
+            .filter((t) => t.length > 0);
+          if (!terms.length) continue;
+          createTextRow(terms);
+          normalized.push({ terms });
+        }
+
+        if (!normalized.length) {
+          textRowsContainer.innerHTML = '';
+          addInitialTextRow();
+          textRows = [];
+        } else {
+          textRows = normalized;
+        }
+      }
+
+      function collectTextRowsFromDOM() {
+        const rows = [];
+        const rowEls = textRowsContainer.querySelectorAll('.text-row');
+        rowEls.forEach((rowEl) => {
+          const terms = [];
+          const inputs = rowEl.querySelectorAll('input[type="text"]');
+          inputs.forEach((input) => {
+            const value = input.value.trim();
+            if (value) terms.push(value);
+          });
+          if (terms.length > 0) {
+            rows.push({ terms });
+          }
+        });
+        return rows;
       }
 
       async function loadOptions() {
@@ -769,20 +1036,7 @@
         lastTaxonomySubkeywordId = taxonomySubkeywordId || '';
 
         // Collect text search rows (rows = AND, terms in a row = OR).
-        const rows = [];
-        const rowEls = textRowsContainer.querySelectorAll('.text-row');
-        rowEls.forEach((rowEl) => {
-          const terms = [];
-          const inputs = rowEl.querySelectorAll('input[type="text"]');
-          inputs.forEach((input) => {
-            const value = input.value.trim();
-            if (value) terms.push(value);
-          });
-          if (terms.length > 0) {
-            rows.push({ terms });
-          }
-        });
-
+        const rows = collectTextRowsFromDOM();
         textRows = rows;
 
         const body = {
@@ -899,8 +1153,191 @@
         });
       }
 
-      // Initial load: options + search with no filters.
+      if (saveSearchBtn) {
+        saveSearchBtn.addEventListener('click', () => {
+          clearTextSearchMessage();
+          const rows = collectTextRowsFromDOM();
+          if (!rows.length) {
+            if (textSearchMessage) {
+              textSearchMessage.textContent =
+                'Enter at least one term before saving a search.';
+            }
+            return;
+          }
+
+          pendingSaveRows = rows;
+          if (!saveSearchBackdrop || !saveSearchNameInput || !saveSearchError) {
+            return;
+          }
+          saveSearchError.textContent = '';
+          saveSearchNameInput.value = '';
+          saveSearchBackdrop.style.display = 'block';
+          saveSearchNameInput.focus();
+        });
+      }
+
+      if (saveSearchCancelBtn) {
+        saveSearchCancelBtn.addEventListener('click', () => {
+          pendingSaveRows = null;
+          if (saveSearchBackdrop) {
+            saveSearchBackdrop.style.display = 'none';
+          }
+        });
+      }
+
+      if (saveSearchConfirmBtn) {
+        saveSearchConfirmBtn.addEventListener('click', async () => {
+          if (!pendingSaveRows || !Array.isArray(pendingSaveRows)) {
+            if (saveSearchError) {
+              saveSearchError.textContent =
+                'Nothing to save. Close and try again.';
+            }
+            return;
+          }
+
+          if (!saveSearchNameInput || !saveSearchError) {
+            return;
+          }
+
+          const name = saveSearchNameInput.value.trim();
+          if (!name) {
+            saveSearchError.textContent = 'Please enter a name.';
+            return;
+          }
+
+          try {
+            saveSearchConfirmBtn.disabled = true;
+            const res = await fetch('/api/search/saved', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                name,
+                text: { rows: pendingSaveRows },
+              }),
+            });
+
+            let json = null;
+            try {
+              json = await res.json();
+            } catch {
+              json = null;
+            }
+
+            if (!res.ok) {
+              const message =
+                json && json.error
+                  ? json.error
+                  : 'Failed to save search.';
+              saveSearchError.textContent = message;
+              saveSearchConfirmBtn.disabled = false;
+              return;
+            }
+
+            await loadSavedSearches();
+            if (savedSearchSelect && json && json.id) {
+              savedSearchSelect.value = String(json.id);
+            }
+
+            pendingSaveRows = null;
+            if (saveSearchBackdrop) {
+              saveSearchBackdrop.style.display = 'none';
+            }
+          } catch (err) {
+            console.error('Error saving search', err);
+            if (saveSearchError) {
+              saveSearchError.textContent =
+                'Unexpected error saving search. See console.';
+            }
+          } finally {
+            saveSearchConfirmBtn.disabled = false;
+          }
+        });
+      }
+
+      if (deleteSavedSearchBtn) {
+        deleteSavedSearchBtn.addEventListener('click', async () => {
+          if (!savedSearchSelect) return;
+          const value = savedSearchSelect.value;
+          if (!value) return;
+
+          const id = Number.parseInt(value, 10);
+          if (!Number.isFinite(id)) return;
+
+          const match = savedSearches.find(
+            (item) => Number.parseInt(String(item.id), 10) === id,
+          );
+          const name = match && match.name ? match.name : '';
+
+          const confirmed = window.confirm(
+            name
+              ? `Delete saved search "${name}"?`
+              : 'Delete this saved search?',
+          );
+          if (!confirmed) return;
+
+          try {
+            deleteSavedSearchBtn.disabled = true;
+            const res = await fetch(
+              `/api/search/saved/${encodeURIComponent(id)}`,
+              {
+                method: 'DELETE',
+              },
+            );
+            if (!res.ok && res.status !== 204 && res.status !== 404) {
+              console.error(
+                'Failed to delete saved search; status:',
+                res.status,
+              );
+            }
+          } catch (err) {
+            console.error('Error deleting saved search', err);
+          } finally {
+            await loadSavedSearches();
+            if (savedSearchSelect) {
+              savedSearchSelect.value = '';
+            }
+            if (deleteSavedSearchBtn) {
+              deleteSavedSearchBtn.disabled = true;
+            }
+          }
+        });
+      }
+
+      if (savedSearchSelect) {
+        savedSearchSelect.addEventListener('change', () => {
+          const value = savedSearchSelect.value;
+
+          if (deleteSavedSearchBtn) {
+            deleteSavedSearchBtn.disabled = !value;
+          }
+
+          if (!value) {
+            return;
+          }
+
+          const id = Number.parseInt(value, 10);
+          if (!Number.isFinite(id)) {
+            return;
+          }
+
+          const match = savedSearches.find(
+            (item) => Number.parseInt(String(item.id), 10) === id,
+          );
+          if (!match || !match.text) {
+            return;
+          }
+
+          clearNonTextFiltersToDefaults();
+          setTextRowsFromSaved(match.text);
+          runSearch();
+        });
+      }
+
+      // Initial load: options + saved searches + search with no filters.
       loadOptions();
+      loadSavedSearches();
       addInitialTextRow();
       runSearch();
     </script>

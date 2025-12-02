@@ -341,6 +341,17 @@ export async function initDb(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `;
 
+  const createSavedTextSearchesTableSQL = `
+    CREATE TABLE IF NOT EXISTS saved_text_searches (
+      id          INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      name        VARCHAR(255) NOT NULL,
+      query_json  JSON         NOT NULL,
+      created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_saved_text_search_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
   await db.query(createDocumentVitalsTableSQL);
   await db.query(createDocumentSmokingTableSQL);
   await db.query(createDocumentMentalHealthTableSQL);
@@ -353,6 +364,7 @@ export async function initDb(): Promise<void> {
   await db.query(createTaxonomySubkeywordsTableSQL);
   await db.query(createDocumentTermsTableSQL);
   await db.query(createDocumentTermEvidenceTableSQL);
+  await db.query(createSavedTextSearchesTableSQL);
 
   // Seed initial taxonomy categories (idempotent).
   await db.query(
