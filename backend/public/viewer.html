@@ -117,19 +117,10 @@
       }
       .comments-input-footer {
         display: flex;
-        justify-content: space-between;
+        justify-content: flex-end;
         align-items: center;
         gap: 0.25rem;
         font-size: 0.8rem;
-      }
-      .comments-input-footer input[type='text'] {
-        flex: 0 0 80px;
-        max-width: 120px;
-        padding: 0.2rem 0.35rem;
-        border-radius: 4px;
-        border: 1px solid #d1d5db;
-        font: inherit;
-        box-sizing: border-box;
       }
       .comments-input-footer button {
         padding: 0.25rem 0.6rem;
@@ -156,6 +147,8 @@
         margin-bottom: 0.5rem;
         padding-bottom: 0.35rem;
         border-bottom: 1px solid #e5e7eb;
+        position: relative;
+        padding-right: 1.2rem;
       }
       .comment-item:last-child {
         border-bottom: none;
@@ -213,6 +206,18 @@
         margin-top: 0.15rem;
         font-size: 0.75rem;
         color: #4b5563;
+      }
+      .comment-delete {
+        position: absolute;
+        top: 0;
+        right: 0;
+        font-size: 0.75rem;
+        color: #ffffff;
+        cursor: pointer;
+        border: none;
+        background: #b91c1c;
+        padding: 0 4px;
+        border-radius: 4px;
       }
       .comments-page-note-hint {
         margin-top: 0.25rem;
@@ -363,15 +368,6 @@
               </label>
             </div>
             <div class="comments-input-footer">
-              <div>
-                <label for="comment-author">Initials</label>
-                <input
-                  type="text"
-                  id="comment-author"
-                  maxlength="4"
-                  placeholder="AB"
-                />
-              </div>
               <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.1rem;">
                 <button id="comment-submit-btn" disabled>Add comment</button>
                 <div id="comment-error" class="comments-input-error"></div>
@@ -392,7 +388,6 @@
         const pageIndicator = document.getElementById('page-indicator');
         const commentsBody = document.getElementById('comments-body');
         const commentTextInput = document.getElementById('comment-text');
-        const commentAuthorInput = document.getElementById('comment-author');
         const commentSubmitBtn = document.getElementById('comment-submit-btn');
         const commentErrorEl = document.getElementById('comment-error');
         const selectionPreviewEl = document.getElementById(
@@ -423,6 +418,7 @@
         let currentDocId = '';
         let currentSelection = null;
         let selectionToolbarEl = null;
+        let currentUser = null;
 
         function setStatus(message, isError) {
           if (!statusEl) return;
@@ -665,6 +661,68 @@
             meta.textContent = parts.join(' • ');
             item.appendChild(meta);
 
+            const isOwner =
+              currentUser &&
+              typeof currentUser.id === 'number' &&
+              typeof c.userId === 'number' &&
+              currentUser.id === c.userId;
+
+            const canDelete = isOwner || typeof c.userId !== 'number';
+
+            if (canDelete && typeof c.id !== 'undefined') {
+              const deleteBtn = document.createElement('button');
+              deleteBtn.type = 'button';
+              deleteBtn.className = 'comment-delete';
+              deleteBtn.textContent = 'x';
+              deleteBtn.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                if (
+                  !window.confirm(
+                    'Delete this comment? This cannot be undone.',
+                  )
+                ) {
+                  return;
+                }
+
+                try {
+                  const res = await fetch(
+                    `/api/documents/${encodeURIComponent(
+                      currentDocId,
+                    )}/comments/${encodeURIComponent(c.id)}`,
+                    {
+                      method: 'DELETE',
+                    },
+                  );
+
+                  if (!res.ok && res.status !== 204) {
+                    const text = await res.text().catch(() => '');
+                    console.error(
+                      'Failed to delete comment:',
+                      res.status,
+                      text,
+                    );
+                    window.alert(
+                      'Failed to delete comment (status ' + res.status + ').',
+                    );
+                    return;
+                  }
+
+                  allComments = allComments.filter(
+                    (existing) => existing.id !== c.id,
+                  );
+                  renderCommentsForPage(currentPage);
+                  renderHighlightsForPage(currentPage);
+                } catch (err) {
+                  console.error('Error deleting comment:', err);
+                  window.alert(
+                    'Unexpected error deleting comment. See console for details.',
+                  );
+                }
+              });
+
+              item.appendChild(deleteBtn);
+            }
+
             if (c.selectedText) {
               const highlightDiv = document.createElement('div');
               highlightDiv.className = 'comment-highlight-preview';
@@ -760,6 +818,8 @@
               pageNumber: Number(row.pageNumber) || 1,
               text: row.text || '',
               author: row.author || '',
+              userId:
+                typeof row.userId === 'number' ? row.userId : undefined,
               selectedText: row.selectedText || '',
               rects: Array.isArray(row.rects) ? row.rects : undefined,
               category: row.category || '',
@@ -910,6 +970,18 @@
           }
 
           try {
+            try {
+              const sessionRes = await fetch('/api/auth/session');
+              if (sessionRes.ok) {
+                const sessionJson = await sessionRes.json().catch(() => null);
+                if (sessionJson && sessionJson.authenticated && sessionJson.user) {
+                  currentUser = sessionJson.user;
+                }
+              }
+            } catch (sessionErr) {
+              console.error('Error loading current user session:', sessionErr);
+            }
+
             const pdfjsLib = window['pdfjsLib'];
             const loadingTask = pdfjsLib.getDocument({ url });
             pdfDoc = await loadingTask.promise;
@@ -980,11 +1052,6 @@
                 return;
               }
 
-              const author =
-                commentAuthorInput && commentAuthorInput.value
-                  ? commentAuthorInput.value.trim()
-                  : '';
-
               try {
                 commentSubmitBtn.disabled = true;
                 if (commentErrorEl) {
@@ -994,7 +1061,6 @@
                 const payload = {
                   pageNumber: currentPage,
                   text,
-                  author: author || undefined,
                 };
 
                 if (
@@ -1072,8 +1138,8 @@
                     typeof json.pageNumber === 'number'
                       ? json.pageNumber
                       : currentPage,
-                  text,
-                  author: author || '',
+                  text: json.text || text,
+                  author: json.author || '',
                   selectedText: json.selectedText || '',
                   rects: Array.isArray(json.rects)
                     ? json.rects

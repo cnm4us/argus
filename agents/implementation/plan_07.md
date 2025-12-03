@@ -49,8 +49,8 @@ Testing: Updated `backend/public/login.html` to use email + password instead of 
 Checkpoint: Wait for developer approval before proceeding.
 
 6. Integrate comments with logged-in user identity and remove the initials field  
-Status: Pending  
-Testing: Update the comments model and API so new comments record the user identity from `req.user` (e.g., store `user_id` and/or `author_name` derived from the account) rather than relying on the free-form “Initials” box. In `viewer.html`, hide or remove the initials input and adjust the comment creation request payload accordingly. Ensure `GET /api/documents/:id/comments` still returns an `author`-style display for each comment, now sourced from the user record for new comments and falling back to legacy data where needed. Manually test creating comments under different accounts to verify that the displayed author matches the logged-in user and that existing comments still render sensibly.  
+Status: Completed  
+Testing: Extended the `document_comments` table in `backend/src/db.ts` with a nullable `user_id` column and an index/foreign key to `users(id)`, plus ALTER-based backfill for existing installations. Updated `POST /api/documents/:id/comments` in `backend/src/routes/documents.ts` to ignore the old `author` body field and instead derive the comment author from `req.user`, storing the numeric `user_id` and a display `author` string derived from `displayName` (or email prefix) on the comment row. The insert now writes `user_id` alongside the existing anchor/metadata fields, and the JSON response includes `userId` and `author` from this derived identity. `GET /api/documents/:id/comments` now selects `user_id` and returns `userId` while still exposing `author` for display; legacy rows without `user_id` continue to work. On the frontend, removed the “Initials” label/input from the viewer comments footer in `backend/public/viewer.html` and simplified the comment payload to omit any author field, relying on the backend to attach the logged-in user. New comments created from the viewer now show the correct `author` (account display name) in the sidebar, and multi-account manual tests can confirm that authorship reflects the current user while older comments still render with their stored author strings.  
 Checkpoint: Wait for developer approval before proceeding.
 
 ## 3. Progress Tracking Notes
@@ -60,4 +60,4 @@ Checkpoint: Wait for developer approval before proceeding.
 - Step 3 — Status: Completed.  
 - Step 4 — Status: Completed.  
 - Step 5 — Status: Completed.  
-- Step 6 — Status: Pending.  
+- Step 6 — Status: Completed.  

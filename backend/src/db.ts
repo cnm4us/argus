@@ -284,6 +284,7 @@ export async function initDb(): Promise<void> {
     CREATE TABLE IF NOT EXISTS document_comments (
       id            INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
       document_id   INT UNSIGNED NOT NULL,
+      user_id       INT UNSIGNED NULL,
       page_number   INT UNSIGNED NOT NULL,
       comment_text  TEXT         NOT NULL,
       author        VARCHAR(64)  NULL,
@@ -295,9 +296,13 @@ export async function initDb(): Promise<void> {
       created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       KEY idx_comments_doc_page (document_id, page_number),
+      KEY idx_comments_user (user_id),
       CONSTRAINT fk_comments_document
         FOREIGN KEY (document_id) REFERENCES documents(id)
-          ON DELETE CASCADE ON UPDATE CASCADE
+          ON DELETE CASCADE ON UPDATE CASCADE,
+      CONSTRAINT fk_comments_user
+        FOREIGN KEY (user_id) REFERENCES users(id)
+          ON DELETE SET NULL ON UPDATE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `;
 
@@ -395,6 +400,20 @@ export async function initDb(): Promise<void> {
   await db.query(createDocumentAppointmentsTableSQL);
   await db.query(createDocumentCommunicationsTableSQL);
   await db.query(createDocumentCommentsTableSQL);
+  // Backfill for existing installations: ensure new highlight/metadata/user columns exist on document_comments.
+  const [commentUserIdCols] = (await db.query(
+    "SHOW COLUMNS FROM document_comments LIKE 'user_id'",
+  )) as any[];
+  if (!Array.isArray(commentUserIdCols) || commentUserIdCols.length === 0) {
+    await db.query(
+      `
+        ALTER TABLE document_comments
+        ADD COLUMN user_id INT UNSIGNED NULL AFTER document_id,
+        ADD KEY idx_comments_user (user_id)
+      `,
+    );
+  }
+
   // Backfill for existing installations: ensure new highlight/metadata columns exist on document_comments.
   const [commentSelectedTextCols] = (await db.query(
     "SHOW COLUMNS FROM document_comments LIKE 'selected_text'",

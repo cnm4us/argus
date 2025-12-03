@@ -2088,6 +2088,7 @@ router.get(
           SELECT
             c.id,
             c.document_id,
+            c.user_id,
             c.page_number,
             c.comment_text,
             c.author,
@@ -2109,6 +2110,8 @@ router.get(
         ? (rows as any[]).map((row) => ({
             id: row.id as number,
             documentId: row.document_id as number,
+            userId:
+              (row.user_id as number | null | undefined) ?? undefined,
             pageNumber: row.page_number as number,
             text: row.comment_text as string,
             author:
@@ -2172,7 +2175,6 @@ router.post(
       const body = req.body as {
         pageNumber?: number;
         text?: string;
-        author?: string;
         selectedText?: string;
         rects?: unknown;
         category?: string;
@@ -2183,8 +2185,6 @@ router.post(
       const pageNumberRaw = body.pageNumber;
       const commentTextRaw =
         typeof body.text === 'string' ? body.text : '';
-      const authorRaw =
-        typeof body.author === 'string' ? body.author : '';
       const selectedTextRaw =
         typeof body.selectedText === 'string'
           ? body.selectedText
@@ -2210,7 +2210,41 @@ router.post(
         return;
       }
 
-      const author = authorRaw.trim().slice(0, 64) || null;
+      const userFromReq = (req as any).user as
+        | {
+            id?: number;
+            email?: string;
+            displayName?: string;
+            role?: string;
+          }
+        | undefined;
+
+      let commentUserId: number | null = null;
+      let author: string | null = null;
+
+      if (userFromReq && typeof userFromReq.id === 'number') {
+        commentUserId = userFromReq.id;
+      }
+
+      if (userFromReq) {
+        const displayName =
+          (typeof userFromReq.displayName === 'string'
+            ? userFromReq.displayName
+            : '') || '';
+        const email =
+          (typeof userFromReq.email === 'string'
+            ? userFromReq.email
+            : '') || '';
+
+        let derivedName = displayName.trim();
+        if (!derivedName && email) {
+          const atIndex = email.indexOf('@');
+          derivedName =
+            atIndex > 0 ? email.slice(0, atIndex) : email;
+        }
+        author = derivedName ? derivedName.slice(0, 64) : null;
+      }
+
       const selectedText = selectedTextRaw.trim() || null;
 
       let rectsJson: string | null = null;
@@ -2273,6 +2307,7 @@ router.post(
         `
           INSERT INTO document_comments (
             document_id,
+            user_id,
             page_number,
             comment_text,
             author,
@@ -2282,10 +2317,11 @@ router.post(
             severity,
             status
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           documentId,
+          commentUserId,
           pageNumber,
           commentText,
           author,
@@ -2305,6 +2341,7 @@ router.post(
       res.status(201).json({
         id: insertId,
         documentId,
+        userId: commentUserId ?? undefined,
         pageNumber,
         text: commentText,
         author: author ?? undefined,
@@ -2317,6 +2354,102 @@ router.post(
     } catch (error) {
       console.error('Error in POST /api/documents/:id/comments:', error);
       res.status(500).json({ error: 'Failed to create document comment.' });
+    }
+  },
+);
+
+// DELETE /api/documents/:id/comments/:commentId
+// Delete a comment by id for a given document (:id = vector_store_file_id).
+router.delete(
+  '/:id/comments/:commentId',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const vectorStoreFileId = (req.params.id || '').trim();
+      const commentIdParam = (req.params.commentId || '').trim();
+
+      if (!vectorStoreFileId) {
+        res.status(400).json({ error: 'Missing document id.' });
+        return;
+      }
+
+      const commentId = Number.parseInt(commentIdParam, 10);
+      if (!Number.isFinite(commentId) || commentId <= 0) {
+        res.status(400).json({ error: 'Invalid comment id.' });
+        return;
+      }
+
+      const userFromReq = (req as any).user as
+        | { id?: number; role?: string }
+        | undefined;
+      if (!userFromReq || typeof userFromReq.id !== 'number') {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const db = await getDb();
+
+      const [docRows] = (await db.query(
+        `
+          SELECT id
+          FROM documents
+          WHERE vector_store_file_id = ?
+          LIMIT 1
+        `,
+        [vectorStoreFileId],
+      )) as any[];
+
+      if (!Array.isArray(docRows) || docRows.length === 0) {
+        res.status(404).json({ error: 'Document not found.' });
+        return;
+      }
+
+      const documentId = (docRows[0] as any).id as number;
+
+      const [commentRows] = (await db.query(
+        `
+          SELECT id, user_id
+          FROM document_comments
+          WHERE id = ? AND document_id = ?
+          LIMIT 1
+        `,
+        [commentId, documentId],
+      )) as any[];
+
+      if (!Array.isArray(commentRows) || commentRows.length === 0) {
+        res.status(404).json({ error: 'Comment not found.' });
+        return;
+      }
+
+      const commentRow = commentRows[0] as any;
+      const commentUserId = commentRow.user_id as number | null | undefined;
+      const isAdmin = userFromReq.role === 'admin';
+
+      if (
+        commentUserId != null &&
+        typeof commentUserId === 'number' &&
+        !isAdmin &&
+        commentUserId !== userFromReq.id
+      ) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+
+      await db.query(
+        `
+          DELETE FROM document_comments
+          WHERE id = ? AND document_id = ?
+        `,
+        [commentId, documentId],
+      );
+
+      res.status(204).send();
+    } catch (error) {
+      console.error(
+        'Error in DELETE /api/documents/:id/comments/:commentId:',
+        error,
+      );
+      res.status(500).json({ error: 'Failed to delete document comment.' });
     }
   },
 );
