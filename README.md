@@ -251,6 +251,12 @@ Saved text searches:
 - Saved searches are stored in `saved_text_searches` and exposed via `GET/POST/DELETE /api/search/saved`.
 - Selecting a saved search repopulates the text rows and re-runs the query; other filters (Documents/Encounters/Dates) remain transient and can be layered on afterward.
 
+Document viewer and comments:
+
+- The Search UI adds a `Viewer` column that opens `/viewer.html?doc=<vectorStoreFileId>` in a new tab for the selected document.
+- `viewer.html` fetches a same-origin PDF URL (currently `/api/files/<openai_file_id>`) via `GET /api/documents/:id/presigned-url` and renders the PDF with PDF.js using a canvas-based viewer and Prev/Next page navigation.
+- Page-level comments are stored in `document_comments` and exposed via `GET/POST /api/documents/:id/comments`; the viewer shows comments for the current page in a right-hand sidebar and allows adding new comments (optionally tagged with initials) tied to the active page.
+
 ## Admin tools: when and what to run
 
 There are two main admin pages:
