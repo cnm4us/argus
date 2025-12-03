@@ -10,6 +10,7 @@
 - Commit `docs(search): document saved text searches` – updated `README.md` search section to mention the `saved_text_searches` table, `/api/search/saved` endpoints, and how saved text-only queries interact with other filters. Keywords: #docs #search.
 - Commit `feat(ui): collapsible filters and saved searches layout` – made the Documents/Encounters/Text Search/Date Range sections on `/search.html` collapsible with large toggle arrows, persisted open/closed state per section in `localStorage`, and restructured the Text Search box so the Rows/terms UI is in a tight left column while Saved Searches controls sit in a right column. Keywords: #ui #search.
 - Commit `feat(ui): polish save-search modal` – updated the Save Search popup so the Exit button is red and the name input uses full-width box sizing, improving affordance and visual balance inside the modal. Keywords: #ui #search.
+- Commit `feat(viewer): add pdf.js viewer and page-level comments` – introduced a dedicated `/viewer.html` shell that uses PDF.js to render PDFs (via a same-origin `/api/files/<openai_file_id>` URL), added a Viewer column on `/search.html` to open documents there, and implemented a `document_comments` table plus `GET/POST /api/documents/:id/comments` so each page can display and accept comments in a right-hand sidebar. Keywords: #ui #viewer #pdfjs #comments.
 
 ## Open Questions / Deferred Tasks
 - (Carry forward any new unresolved items from this thread as they arise.)
