@@ -266,6 +266,22 @@ export async function initDb(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `;
 
+  const createDocumentCommentsTableSQL = `
+    CREATE TABLE IF NOT EXISTS document_comments (
+      id            INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      document_id   INT UNSIGNED NOT NULL,
+      page_number   INT UNSIGNED NOT NULL,
+      comment_text  TEXT         NOT NULL,
+      author        VARCHAR(64)  NULL,
+      created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_comments_doc_page (document_id, page_number),
+      CONSTRAINT fk_comments_document
+        FOREIGN KEY (document_id) REFERENCES documents(id)
+          ON DELETE CASCADE ON UPDATE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
   const createTaxonomyCategoriesTableSQL = `
     CREATE TABLE IF NOT EXISTS taxonomy_categories (
       id          VARCHAR(64) PRIMARY KEY,
@@ -359,6 +375,7 @@ export async function initDb(): Promise<void> {
   await db.query(createDocumentResultsTableSQL);
   await db.query(createDocumentAppointmentsTableSQL);
   await db.query(createDocumentCommunicationsTableSQL);
+  await db.query(createDocumentCommentsTableSQL);
   await db.query(createTaxonomyCategoriesTableSQL);
   await db.query(createTaxonomyKeywordsTableSQL);
   await db.query(createTaxonomySubkeywordsTableSQL);

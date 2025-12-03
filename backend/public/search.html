@@ -489,6 +489,7 @@
             <th class="sortable date-col" data-sort-key="date">Date</th>
             <th class="sortable" data-sort-key="filename">File Name</th>
             <th>Details</th>
+            <th>Viewer</th>
             <th class="sortable" data-sort-key="providerName">Provider</th>
             <th class="sortable" data-sort-key="clinicOrFacility">
               Clinic / Facility
@@ -1155,6 +1156,14 @@
           detailsLink.textContent = 'Details';
           detailsTd.appendChild(detailsLink);
           tr.appendChild(detailsTd);
+
+          const viewerTd = document.createElement('td');
+          const viewerLink = document.createElement('a');
+          viewerLink.href = `/viewer.html?doc=${encodeURIComponent(item.id)}`;
+          viewerLink.target = '_blank';
+          viewerLink.textContent = 'View PDF';
+          viewerTd.appendChild(viewerLink);
+          tr.appendChild(viewerTd);
 
           const providerTd = document.createElement('td');
           providerTd.textContent = item.providerName || '';

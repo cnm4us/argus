@@ -18,7 +18,11 @@ import {
   loadModuleTemplate,
 } from '../templates';
 import { getDb } from '../db';
-import { uploadPdfToS3, deleteObjectFromS3 } from '../s3Client';
+import {
+  uploadPdfToS3,
+  deleteObjectFromS3,
+  getPresignedUrlForS3Key,
+} from '../s3Client';
 import { logOpenAI } from '../logger';
 import { updateDocumentProjectionsForVectorStoreFile } from '../metadataProjections';
 import {
@@ -2002,6 +2006,241 @@ router.get('/db', requireAuth, async (_req: Request, res: Response) => {
   } catch (error) {
     console.error('Error in GET /api/documents/db:', error);
     res.status(500).json({ error: 'Failed to list documents from DB' });
+  }
+});
+
+// GET /api/documents/:id/presigned-url
+// Return a short-lived pre-signed S3 URL for the underlying PDF
+// without redirecting. :id is documents.vector_store_file_id.
+router.get(
+  '/:id/presigned-url',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const vectorStoreFileId = (req.params.id || '').trim();
+      if (!vectorStoreFileId) {
+        res.status(400).json({ error: 'Missing document id.' });
+        return;
+      }
+
+      const db = await getDb();
+      const [rows] = (await db.query(
+        `
+          SELECT s3_key, openai_file_id
+          FROM documents
+          WHERE vector_store_file_id = ?
+          LIMIT 1
+        `,
+        [vectorStoreFileId],
+      )) as any[];
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        res.status(404).json({ error: 'Document not found.' });
+        return;
+      }
+
+      const row = rows[0] as any;
+      const openaiFileIdRaw = row.openai_file_id as string | null | undefined;
+      const openaiFileId =
+        openaiFileIdRaw && typeof openaiFileIdRaw === 'string'
+          ? openaiFileIdRaw
+          : '';
+      const url = openaiFileId
+        ? `/api/files/${encodeURIComponent(openaiFileId)}`
+        : null;
+
+      if (!url) {
+        res
+          .status(404)
+          .json({ error: 'No PDF is available for this document.' });
+        return;
+      }
+
+      res.json({ url });
+    } catch (error) {
+      console.error(
+        'Error in GET /api/documents/:id/presigned-url:',
+        error,
+      );
+      res
+        .status(500)
+        .json({ error: 'Failed to generate pre-signed PDF URL.' });
+    }
+  },
+);
+
+// GET /api/documents/:id/comments
+// List page-level comments for a document (:id = vector_store_file_id).
+router.get(
+  '/:id/comments',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const vectorStoreFileId = (req.params.id || '').trim();
+      if (!vectorStoreFileId) {
+        res.status(400).json({ error: 'Missing document id.' });
+        return;
+      }
+
+      const db = await getDb();
+      const [rows] = (await db.query(
+        `
+          SELECT c.id, c.document_id, c.page_number, c.comment_text, c.author, c.created_at
+          FROM document_comments c
+          JOIN documents d ON d.id = c.document_id
+          WHERE d.vector_store_file_id = ?
+          ORDER BY c.page_number ASC, c.created_at ASC
+        `,
+        [vectorStoreFileId],
+      )) as any[];
+
+      const items = Array.isArray(rows)
+        ? (rows as any[]).map((row) => ({
+            id: row.id as number,
+            documentId: row.document_id as number,
+            pageNumber: row.page_number as number,
+            text: row.comment_text as string,
+            author:
+              (row.author as string | null | undefined) ??
+              undefined,
+            createdAt: (row.created_at as Date | string | null) ?? null,
+          }))
+        : [];
+
+      res.json({ items });
+    } catch (error) {
+      console.error('Error in GET /api/documents/:id/comments:', error);
+      res.status(500).json({ error: 'Failed to load document comments.' });
+    }
+  },
+);
+
+// POST /api/documents/:id/comments
+// Create a new page-level comment for a document (:id = vector_store_file_id).
+router.post(
+  '/:id/comments',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const vectorStoreFileId = (req.params.id || '').trim();
+      if (!vectorStoreFileId) {
+        res.status(400).json({ error: 'Missing document id.' });
+        return;
+      }
+
+      const body = req.body as {
+        pageNumber?: number;
+        text?: string;
+        author?: string;
+      };
+
+      const pageNumberRaw = body.pageNumber;
+      const commentTextRaw =
+        typeof body.text === 'string' ? body.text : '';
+      const authorRaw =
+        typeof body.author === 'string' ? body.author : '';
+
+      const pageNumber = Number(pageNumberRaw);
+      if (!Number.isFinite(pageNumber) || pageNumber < 1) {
+        res
+          .status(400)
+          .json({ error: 'pageNumber must be a positive integer.' });
+        return;
+      }
+
+      const commentText = commentTextRaw.trim();
+      if (!commentText) {
+        res.status(400).json({ error: 'Comment text is required.' });
+        return;
+      }
+
+      const author = authorRaw.trim().slice(0, 64) || null;
+
+      const db = await getDb();
+      const [docRows] = (await db.query(
+        `
+          SELECT id
+          FROM documents
+          WHERE vector_store_file_id = ?
+          LIMIT 1
+        `,
+        [vectorStoreFileId],
+      )) as any[];
+
+      if (!Array.isArray(docRows) || docRows.length === 0) {
+        res.status(404).json({ error: 'Document not found.' });
+        return;
+      }
+
+      const documentId = (docRows[0] as any).id as number;
+
+      const [result] = (await db.query(
+        `
+          INSERT INTO document_comments (document_id, page_number, comment_text, author)
+          VALUES (?, ?, ?, ?)
+        `,
+        [documentId, pageNumber, commentText, author],
+      )) as any[];
+
+      const insertId =
+        result && typeof result.insertId === 'number'
+          ? (result.insertId as number)
+          : null;
+
+      res.status(201).json({
+        id: insertId,
+        documentId,
+        pageNumber,
+        text: commentText,
+        author: author ?? undefined,
+      });
+    } catch (error) {
+      console.error('Error in POST /api/documents/:id/comments:', error);
+      res.status(500).json({ error: 'Failed to create document comment.' });
+    }
+  },
+);
+
+// GET /api/documents/:id/view
+// Redirect to a short-lived pre-signed S3 URL for the underlying PDF,
+// where :id is the documents.vector_store_file_id.
+router.get('/:id/view', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const vectorStoreFileId = (req.params.id || '').trim();
+    if (!vectorStoreFileId) {
+      res.status(400).json({ error: 'Missing document id.' });
+      return;
+    }
+
+    const db = await getDb();
+    const [rows] = (await db.query(
+      `
+        SELECT s3_key
+        FROM documents
+        WHERE vector_store_file_id = ?
+        LIMIT 1
+      `,
+      [vectorStoreFileId],
+    )) as any[];
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      res.status(404).json({ error: 'Document not found.' });
+      return;
+    }
+
+    const row = rows[0] as any;
+    const s3KeyRaw = row.s3_key as string | null | undefined;
+    const s3Key = s3KeyRaw && typeof s3KeyRaw === 'string' ? s3KeyRaw : '';
+    if (!s3Key) {
+      res.status(404).json({ error: 'No PDF is available for this document.' });
+      return;
+    }
+
+    const url = await getPresignedUrlForS3Key(s3Key);
+    res.redirect(url);
+  } catch (error) {
+    console.error('Error in GET /api/documents/:id/view:', error);
+    res.status(500).json({ error: 'Failed to generate pre-signed PDF URL.' });
   }
 });
 

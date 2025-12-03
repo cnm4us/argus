@@ -426,7 +426,8 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
         d.document_type,
         d.date,
         d.provider_name,
-        d.clinic_or_facility
+        d.clinic_or_facility,
+        d.s3_key
       FROM documents d
       ${join}
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
@@ -451,6 +452,8 @@ router.get('/db', requireAuth, async (req: Request, res: Response) => {
         date: dateStr,
         providerName: (row.provider_name as string | null) ?? '',
         clinicOrFacility: (row.clinic_or_facility as string | null) ?? '',
+        hasPdf:
+          typeof row.s3_key === 'string' && (row.s3_key as string).length > 0,
       };
     });
 
