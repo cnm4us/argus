@@ -31,11 +31,12 @@ app.use((req, res, next) => {
   }
 
   const isLoginPage = req.path === '/login.html';
+  const isRegisterPage = req.path === '/register.html';
   const isRoot = req.path === '/';
   const isStaticAsset =
     /\.(css|js|png|jpg|jpeg|svg|ico|map)$/.test(req.path);
 
-  if (isLoginPage || isStaticAsset) {
+  if (isLoginPage || isRegisterPage || isStaticAsset) {
     next();
     return;
   }

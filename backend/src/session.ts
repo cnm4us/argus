@@ -5,7 +5,7 @@ export const SESSION_COOKIE_NAME = 'argus_session';
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12; // 12 hours
 
-interface SessionPayload {
+export interface SessionPayload {
   sub: string;
   exp: number;
 }
@@ -32,9 +32,9 @@ function signPayload(payloadB64: string): string {
   return base64UrlEncode(hmac.digest());
 }
 
-export function createSessionToken(): string {
+export function createSessionToken(userId: number | string): string {
   const payload: SessionPayload = {
-    sub: 'argus',
+    sub: String(userId),
     exp: Date.now() + SESSION_TTL_MS,
   };
   const payloadB64 = base64UrlEncode(Buffer.from(JSON.stringify(payload), 'utf8'));
@@ -42,29 +42,35 @@ export function createSessionToken(): string {
   return `${payloadB64}.${sigB64}`;
 }
 
-export function verifySessionToken(token: string): boolean {
+export function decodeSessionToken(token: string): SessionPayload | null {
   try {
     if (!config.appPassword) {
-      return false;
+      return null;
     }
 
     const parts = token.split('.');
-    if (parts.length !== 2) return false;
+    if (parts.length !== 2) return null;
 
     const [payloadB64, sigB64] = parts;
     const expectedSig = signPayload(payloadB64);
 
     const a = Buffer.from(expectedSig);
     const b = Buffer.from(sigB64);
-    if (a.length !== b.length) return false;
-    if (!crypto.timingSafeEqual(a, b)) return false;
+    if (a.length !== b.length) return null;
+    if (!crypto.timingSafeEqual(a, b)) return null;
 
     const payloadJson = base64UrlDecode(payloadB64).toString('utf8');
     const payload = JSON.parse(payloadJson) as SessionPayload;
-    if (!payload.exp || typeof payload.exp !== 'number') return false;
-    return payload.exp > Date.now();
+    if (!payload.exp || typeof payload.exp !== 'number') return null;
+    if (payload.exp <= Date.now()) return null;
+    if (!payload.sub || typeof payload.sub !== 'string') return null;
+    return payload;
   } catch {
-    return false;
+    return null;
   }
+}
+
+export function verifySessionToken(token: string): boolean {
+  return decodeSessionToken(token) !== null;
 }
 

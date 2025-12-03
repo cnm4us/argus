@@ -162,10 +162,12 @@
   <body>
     <div class="navbar">
       <a href="/login.html">Login</a>
+      <a href="/register.html">Register</a>
       <a href="/documents.html">Documents</a>
       <a href="/search.html">Search</a>
       <a href="/openai-documents.html">OpenAI</a>
       <a href="/admin-modules.html">Admin</a>
+      <a href="#" id="logout-link">Logout</a>
     </div>
     <div class="container">
       <h1>Argus – Upload Document</h1>
@@ -223,6 +225,7 @@
       <div id="uploads" class="uploads"></div>
     </div>
 
+    <script src="/auth.js"></script>
     <script>
       const statusEl = document.getElementById('status');
       const documentTypeSelect = document.getElementById('document_type');

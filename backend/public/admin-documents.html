@@ -109,10 +109,12 @@
   <body>
     <div class="navbar">
       <a href="/login.html">Login</a>
+      <a href="/register.html">Register</a>
       <a href="/documents.html">Documents</a>
       <a href="/search.html">Search</a>
       <a href="/openai-documents.html">OpenAI</a>
       <a href="/admin-modules.html" class="active">Admin</a>
+      <a href="#" id="logout-link">Logout</a>
     </div>
     <div class="container">
       <h1>Admin – Documents</h1>
@@ -152,6 +154,7 @@
       <div class="status" id="status"></div>
     </div>
 
+    <script src="/auth.js"></script>
     <script>
       const statusEl = document.getElementById('status');
       const tableBody = document.querySelector('#docs-table tbody');

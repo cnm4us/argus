@@ -25,6 +25,19 @@ export async function getDb(): Promise<mysql.Pool> {
 export async function initDb(): Promise<void> {
   const db = await getDb();
 
+  const createUsersTableSQL = `
+    CREATE TABLE IF NOT EXISTS users (
+      id             INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      email          VARCHAR(255) NOT NULL,
+      display_name   VARCHAR(255) NOT NULL,
+      password_hash  VARCHAR(255) NOT NULL,
+      role           ENUM('user','admin') NOT NULL DEFAULT 'user',
+      created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_users_email (email)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
   const createDocumentsTableSQL = `
     CREATE TABLE IF NOT EXISTS documents (
       id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -51,6 +64,7 @@ export async function initDb(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `;
 
+  await db.query(createUsersTableSQL);
   await db.query(createDocumentsTableSQL);
 
   // Backfill for existing installations: ensure s3_key column exists.

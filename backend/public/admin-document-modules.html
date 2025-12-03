@@ -95,12 +95,14 @@
   <body>
     <div class="navbar">
       <a href="/login.html">Login</a>
+      <a href="/register.html">Register</a>
       <a href="/documents.html">Documents</a>
       <a href="/search.html">Search</a>
       <a href="/openai-documents.html">OpenAI</a>
       <a href="/admin-modules.html">Admin Modules</a>
       <a href="/admin-taxonomy.html">Admin Taxonomy</a>
       <a href="/admin-documents.html">Admin Documents</a>
+      <a href="#" id="logout-link">Logout</a>
     </div>
     <div class="container">
       <h1>Admin – Document Modules</h1>
@@ -126,6 +128,7 @@
       <div class="status" id="status"></div>
     </div>
 
+    <script src="/auth.js"></script>
     <script>
       function getParam(name) {
         const params = new URLSearchParams(window.location.search);
@@ -270,4 +273,3 @@
     </script>
   </body>
   </html>
-

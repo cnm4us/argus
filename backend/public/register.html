@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Argus – Login</title>
+    <title>Argus – Register</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
       body {
@@ -42,6 +42,7 @@
         font-weight: 500;
       }
       input[type="email"],
+      input[type="text"],
       input[type="password"] {
         width: 100%;
         padding: 0.4rem 0.5rem;
@@ -88,18 +89,18 @@
   </head>
   <body>
     <div class="navbar">
-      <a href="/login.html" class="active">Login</a>
-      <a href="/register.html">Register</a>
+      <a href="/login.html">Login</a>
+      <a href="/register.html" class="active">Register</a>
       <a href="/documents.html">Documents</a>
       <a href="/search.html">Search</a>
       <a href="/openai-documents.html">OpenAI</a>
       <a href="/admin-modules.html">Admin</a>
     </div>
     <div class="container">
-      <h1>Argus – Login</h1>
+      <h1>Argus – Register</h1>
       <p>
-        Log in with your email and password. After login, you can use the upload,
-        documents, search, and admin pages without re-entering your credentials.
+        Create a new Argus account with your email and password. After
+        registering, you will be logged in automatically.
       </p>
 
       <label for="email">Email</label>
@@ -110,115 +111,116 @@
         autofocus
       />
 
-      <label for="password">Password</label>
+      <label for="display-name">Display name (optional)</label>
+      <input
+        id="display-name"
+        type="text"
+        autocomplete="name"
+      />
+
+      <label for="password">Password (min 8 characters)</label>
       <input
         id="password"
         type="password"
-        autocomplete="current-password"
+        autocomplete="new-password"
       />
-      <button id="login-btn">Login</button>
+
+      <button id="register-btn">Register</button>
       <div id="status" class="status"></div>
 
       <div class="links">
-        <div><a href="/documents.html">View documents</a></div>
+        <div>Already have an account? <a href="/login.html">Log in</a></div>
       </div>
     </div>
 
     <script>
       const emailInput = document.getElementById('email');
+      const displayNameInput = document.getElementById('display-name');
       const passwordInput = document.getElementById('password');
-      const loginBtn = document.getElementById('login-btn');
+      const registerBtn = document.getElementById('register-btn');
       const statusEl = document.getElementById('status');
 
-      async function checkSession() {
-        try {
-          const res = await fetch('/api/auth/session');
-          if (res.ok) {
-            const json = await res.json().catch(() => null);
-            if (json && json.authenticated && json.user) {
-              statusEl.textContent = 'Already logged in as ' + (json.user.displayName || json.user.email) + '.';
-              statusEl.className = 'status success';
-            } else {
-              statusEl.textContent = '';
-              statusEl.className = 'status';
-            }
-          } else {
-            statusEl.textContent = '';
-            statusEl.className = 'status';
-          }
-        } catch {
-          statusEl.textContent = '';
-          statusEl.className = 'status';
-        }
-      }
-
-      async function login() {
+      async function register() {
         const email = (emailInput.value || '').trim();
+        const displayName = (displayNameInput.value || '').trim();
         const password = (passwordInput.value || '').trim();
+
         if (!email) {
           statusEl.textContent = 'Enter email.';
           statusEl.className = 'status error';
           return;
         }
-        if (!password) {
-          statusEl.textContent = 'Enter password.';
+        if (!password || password.length < 8) {
+          statusEl.textContent = 'Password must be at least 8 characters.';
           statusEl.className = 'status error';
           return;
         }
 
-        loginBtn.disabled = true;
-        statusEl.textContent = 'Logging in…';
+        registerBtn.disabled = true;
+        statusEl.textContent = 'Creating account…';
         statusEl.className = 'status';
 
         try {
-          const res = await fetch('/api/auth/login', {
+          const res = await fetch('/api/auth/register', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ email, password }),
+            body: JSON.stringify({
+              email,
+              password,
+              displayName: displayName || undefined,
+            }),
           });
 
           const json = await res.json().catch(() => null);
 
           if (!res.ok) {
             statusEl.textContent =
-              'Login failed: ' + (json && json.error ? json.error : res.status);
+              'Registration failed: ' +
+              (json && json.error ? json.error : res.status);
             statusEl.className = 'status error';
             return;
           }
 
-          statusEl.textContent = 'Login successful. Redirecting…';
+          statusEl.textContent = 'Registration successful. Redirecting…';
           statusEl.className = 'status success';
           emailInput.value = '';
+          displayNameInput.value = '';
           passwordInput.value = '';
+
           setTimeout(() => {
             window.location.href = '/search.html';
           }, 500);
         } catch (err) {
           console.error(err);
-          statusEl.textContent = 'Unexpected error during login.';
+          statusEl.textContent = 'Unexpected error during registration.';
           statusEl.className = 'status error';
         } finally {
-          loginBtn.disabled = false;
+          registerBtn.disabled = false;
         }
       }
 
-      loginBtn.addEventListener('click', login);
+      registerBtn.addEventListener('click', register);
       passwordInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
-          login();
+          register();
         }
       });
       emailInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
-          login();
+          register();
         }
       });
-
-      checkSession();
+      displayNameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          register();
+        }
+      });
     </script>
   </body>
   </html>
+
