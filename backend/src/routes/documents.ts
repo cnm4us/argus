@@ -2085,7 +2085,18 @@ router.get(
       const db = await getDb();
       const [rows] = (await db.query(
         `
-          SELECT c.id, c.document_id, c.page_number, c.comment_text, c.author, c.created_at
+          SELECT
+            c.id,
+            c.document_id,
+            c.page_number,
+            c.comment_text,
+            c.author,
+            c.selected_text,
+            c.rects_json,
+            c.category,
+            c.severity,
+            c.status,
+            c.created_at
           FROM document_comments c
           JOIN documents d ON d.id = c.document_id
           WHERE d.vector_store_file_id = ?
@@ -2102,6 +2113,36 @@ router.get(
             text: row.comment_text as string,
             author:
               (row.author as string | null | undefined) ??
+              undefined,
+            selectedText:
+              (row.selected_text as string | null | undefined) ??
+              undefined,
+            rects: (() => {
+              const raw = (row.rects_json ?? null) as any;
+              if (!raw) {
+                return undefined;
+              }
+              if (typeof raw === 'string') {
+                try {
+                  const parsed = JSON.parse(raw);
+                  return Array.isArray(parsed) ? parsed : undefined;
+                } catch {
+                  return undefined;
+                }
+              }
+              if (Array.isArray(raw)) {
+                return raw;
+              }
+              return undefined;
+            })(),
+            category:
+              (row.category as string | null | undefined) ??
+              undefined,
+            severity:
+              (row.severity as string | null | undefined) ??
+              undefined,
+            status:
+              (row.status as string | null | undefined) ??
               undefined,
             createdAt: (row.created_at as Date | string | null) ?? null,
           }))
@@ -2132,6 +2173,11 @@ router.post(
         pageNumber?: number;
         text?: string;
         author?: string;
+        selectedText?: string;
+        rects?: unknown;
+        category?: string;
+        severity?: string;
+        status?: string;
       };
 
       const pageNumberRaw = body.pageNumber;
@@ -2139,6 +2185,16 @@ router.post(
         typeof body.text === 'string' ? body.text : '';
       const authorRaw =
         typeof body.author === 'string' ? body.author : '';
+      const selectedTextRaw =
+        typeof body.selectedText === 'string'
+          ? body.selectedText
+          : '';
+      const categoryRaw =
+        typeof body.category === 'string' ? body.category : '';
+      const severityRaw =
+        typeof body.severity === 'string' ? body.severity : '';
+      const statusRaw =
+        typeof body.status === 'string' ? body.status : '';
 
       const pageNumber = Number(pageNumberRaw);
       if (!Number.isFinite(pageNumber) || pageNumber < 1) {
@@ -2155,6 +2211,45 @@ router.post(
       }
 
       const author = authorRaw.trim().slice(0, 64) || null;
+      const selectedText = selectedTextRaw.trim() || null;
+
+      let rectsJson: string | null = null;
+      if (Array.isArray(body.rects)) {
+        try {
+          rectsJson = JSON.stringify(body.rects);
+        } catch {
+          rectsJson = null;
+        }
+      }
+
+      const category = categoryRaw.trim().slice(0, 64) || null;
+
+      const allowedSeverities = new Set(['low', 'medium', 'high']);
+      let severity: string | null = null;
+      if (severityRaw.trim()) {
+        const normalized = severityRaw.trim().toLowerCase();
+        if (!allowedSeverities.has(normalized)) {
+          res.status(400).json({
+            error:
+              "severity must be one of: 'low', 'medium', or 'high'.",
+          });
+          return;
+        }
+        severity = normalized;
+      }
+
+      const allowedStatuses = new Set(['open', 'resolved']);
+      let status: string | null = null;
+      if (statusRaw.trim()) {
+        const normalized = statusRaw.trim().toLowerCase();
+        if (!allowedStatuses.has(normalized)) {
+          res.status(400).json({
+            error: "status must be one of: 'open' or 'resolved'.",
+          });
+          return;
+        }
+        status = normalized;
+      }
 
       const db = await getDb();
       const [docRows] = (await db.query(
@@ -2176,10 +2271,30 @@ router.post(
 
       const [result] = (await db.query(
         `
-          INSERT INTO document_comments (document_id, page_number, comment_text, author)
-          VALUES (?, ?, ?, ?)
+          INSERT INTO document_comments (
+            document_id,
+            page_number,
+            comment_text,
+            author,
+            selected_text,
+            rects_json,
+            category,
+            severity,
+            status
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
-        [documentId, pageNumber, commentText, author],
+        [
+          documentId,
+          pageNumber,
+          commentText,
+          author,
+          selectedText,
+          rectsJson,
+          category,
+          severity,
+          status,
+        ],
       )) as any[];
 
       const insertId =
@@ -2193,6 +2308,11 @@ router.post(
         pageNumber,
         text: commentText,
         author: author ?? undefined,
+        selectedText: selectedText ?? undefined,
+        rects: rectsJson ? JSON.parse(rectsJson) : undefined,
+        category: category ?? undefined,
+        severity: severity ?? undefined,
+        status: status ?? undefined,
       });
     } catch (error) {
       console.error('Error in POST /api/documents/:id/comments:', error);

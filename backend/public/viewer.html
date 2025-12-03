@@ -166,11 +166,116 @@
         color: #6b7280;
         margin-bottom: 0.15rem;
       }
+      .comments-selection-preview {
+        margin-top: 0.25rem;
+        padding: 0.25rem 0.35rem;
+        border-radius: 4px;
+        background: #f3f4f6;
+        font-size: 0.75rem;
+        color: #374151;
+        max-height: 3.5rem;
+        overflow: hidden;
+      }
+      .comments-selection-label {
+        font-weight: 600;
+        margin-bottom: 0.1rem;
+      }
+      .comments-selection-text {
+        font-style: italic;
+        color: #4b5563;
+      }
+      .comments-metadata-row {
+        margin-top: 0.3rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        font-size: 0.8rem;
+      }
+      .comments-metadata-row label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+      }
+      .comments-metadata-row select {
+        min-width: 100px;
+        padding: 0.15rem 0.3rem;
+        border-radius: 4px;
+        border: 1px solid #d1d5db;
+        font: inherit;
+      }
+      .comment-highlight-preview {
+        margin-top: 0.1rem;
+        font-size: 0.78rem;
+        color: #4b5563;
+        font-style: italic;
+      }
+      .comment-badges {
+        margin-top: 0.15rem;
+        font-size: 0.75rem;
+        color: #4b5563;
+      }
+      .comments-page-note-hint {
+        margin-top: 0.25rem;
+        font-size: 0.75rem;
+        color: #6b7280;
+      }
+      .viewer-doc {
+        flex: 1 1 auto;
+        display: flex;
+        justify-content: center;
+      }
+      .pdf-page-container {
+        position: relative;
+        display: inline-block;
+      }
       #pdf-canvas {
         background: #ffffff;
         box-shadow: 0 0 8px rgba(0, 0, 0, 0.4);
         max-width: 100%;
         height: auto;
+        display: block;
+      }
+      .pdf-highlight-layer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        pointer-events: none;
+        z-index: 1;
+      }
+      .pdf-highlight-box {
+        position: absolute;
+        background: rgba(234, 179, 8, 0.35);
+        border-radius: 2px;
+      }
+      .pdf-text-layer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        pointer-events: auto;
+        color: transparent;
+        z-index: 2;
+      }
+      .pdf-text-layer span {
+        position: absolute;
+        white-space: pre;
+        cursor: text;
+        transform-origin: 0% 0%;
+      }
+      .selection-toolbar-btn {
+        position: absolute;
+        z-index: 3;
+        padding: 0.1rem 0.4rem;
+        font-size: 0.75rem;
+        border-radius: 4px;
+        border: 1px solid #6b7280;
+        background: #f9fafb;
+        color: #111827;
+        cursor: pointer;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
       }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
@@ -195,7 +300,14 @@
       </div>
       <div class="viewer-frame-wrapper">
         <div class="viewer-doc">
-          <canvas id="pdf-canvas"></canvas>
+          <div class="pdf-page-container">
+            <canvas id="pdf-canvas"></canvas>
+            <div
+              id="pdf-highlight-layer"
+              class="pdf-highlight-layer"
+            ></div>
+            <div id="pdf-text-layer" class="pdf-text-layer"></div>
+          </div>
         </div>
         <aside class="viewer-comments">
           <div class="comments-header">Comments</div>
@@ -205,6 +317,51 @@
               id="comment-text"
               placeholder="Add a comment for this page..."
             ></textarea>
+            <div
+              id="comment-selection-preview"
+              class="comments-selection-preview"
+              style="display: none;"
+            >
+              <div class="comments-selection-label">Selection</div>
+              <div
+                id="comment-selection-text"
+                class="comments-selection-text"
+              ></div>
+            </div>
+            <div
+              id="comment-page-note-hint"
+              class="comments-page-note-hint"
+            >
+              No text selected — comment will apply to this page.
+            </div>
+            <div class="comments-metadata-row">
+              <label for="comment-category">
+                Category
+                <select id="comment-category">
+                  <option value="">(none)</option>
+                  <option value="clinical risk">Clinical risk</option>
+                  <option value="documentation">Documentation</option>
+                  <option value="legal note">Legal note</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <label for="comment-severity">
+                Severity
+                <select id="comment-severity">
+                  <option value="">(none)</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </label>
+              <label for="comment-status">
+                Status
+                <select id="comment-status">
+                  <option value="open">Open</option>
+                  <option value="resolved">Resolved</option>
+                </select>
+              </label>
+            </div>
             <div class="comments-input-footer">
               <div>
                 <label for="comment-author">Initials</label>
@@ -238,6 +395,24 @@
         const commentAuthorInput = document.getElementById('comment-author');
         const commentSubmitBtn = document.getElementById('comment-submit-btn');
         const commentErrorEl = document.getElementById('comment-error');
+        const selectionPreviewEl = document.getElementById(
+          'comment-selection-preview',
+        );
+        const selectionPreviewTextEl = document.getElementById(
+          'comment-selection-text',
+        );
+        const pageNoteHintEl = document.getElementById(
+          'comment-page-note-hint',
+        );
+        const commentCategorySelect = document.getElementById(
+          'comment-category',
+        );
+        const commentSeveritySelect = document.getElementById(
+          'comment-severity',
+        );
+        const commentStatusSelect = document.getElementById('comment-status');
+        const textLayerEl = document.getElementById('pdf-text-layer');
+        const highlightLayerEl = document.getElementById('pdf-highlight-layer');
 
         let pdfDoc = null;
         let currentPage = 1;
@@ -246,6 +421,8 @@
         let pendingPage = null;
         let allComments = [];
         let currentDocId = '';
+        let currentSelection = null;
+        let selectionToolbarEl = null;
 
         function setStatus(message, isError) {
           if (!statusEl) return;
@@ -264,6 +441,187 @@
             nextBtn.disabled =
               totalPages === 0 || currentPage >= totalPages;
           }
+        }
+
+        function renderHighlightsForPage(pageNum) {
+          if (!highlightLayerEl || !canvasEl) return;
+          highlightLayerEl.innerHTML = '';
+
+          if (!Array.isArray(allComments) || allComments.length === 0) {
+            return;
+          }
+
+          const width = canvasEl.width;
+          const height = canvasEl.height;
+          if (!width || !height) return;
+
+          const filtered = allComments.filter(
+            (c) =>
+              c.pageNumber === pageNum &&
+              Array.isArray(c.rects) &&
+              c.rects.length > 0,
+          );
+
+          if (filtered.length === 0) return;
+
+          highlightLayerEl.style.width = `${width}px`;
+          highlightLayerEl.style.height = `${height}px`;
+
+          filtered.forEach((c) => {
+            (c.rects || []).forEach((rect) => {
+              if (
+                !rect ||
+                typeof rect.x !== 'number' ||
+                typeof rect.y !== 'number' ||
+                typeof rect.width !== 'number' ||
+                typeof rect.height !== 'number'
+              ) {
+                return;
+              }
+
+              const box = document.createElement('div');
+              box.className = 'pdf-highlight-box';
+              box.style.left = `${rect.x * width}px`;
+              box.style.top = `${rect.y * height}px`;
+              box.style.width = `${rect.width * width}px`;
+              box.style.height = `${rect.height * height}px`;
+
+              highlightLayerEl.appendChild(box);
+            });
+          });
+        }
+
+        function clearSelectionState() {
+          currentSelection = null;
+          if (selectionToolbarEl && selectionToolbarEl.parentNode) {
+            selectionToolbarEl.parentNode.removeChild(selectionToolbarEl);
+          }
+          selectionToolbarEl = null;
+          if (selectionPreviewEl && selectionPreviewTextEl) {
+            selectionPreviewEl.style.display = 'none';
+            selectionPreviewTextEl.textContent = '';
+          }
+          if (pageNoteHintEl) {
+            pageNoteHintEl.style.display = 'block';
+          }
+        }
+
+        function updateSelectionPreview() {
+          if (!selectionPreviewEl || !selectionPreviewTextEl) return;
+          if (!currentSelection || !currentSelection.selectedText) {
+            selectionPreviewEl.style.display = 'none';
+            selectionPreviewTextEl.textContent = '';
+            if (pageNoteHintEl) {
+              pageNoteHintEl.style.display = 'block';
+            }
+            return;
+          }
+          const raw = String(currentSelection.selectedText || '').trim();
+          if (!raw) {
+            selectionPreviewEl.style.display = 'none';
+            selectionPreviewTextEl.textContent = '';
+            if (pageNoteHintEl) {
+              pageNoteHintEl.style.display = 'block';
+            }
+            return;
+          }
+          const maxLen = 200;
+          const shortText =
+            raw.length > maxLen ? `${raw.slice(0, maxLen)}…` : raw;
+          selectionPreviewTextEl.textContent = `“${shortText}”`;
+          selectionPreviewEl.style.display = 'block';
+          if (pageNoteHintEl) {
+            pageNoteHintEl.style.display = 'none';
+          }
+        }
+
+        function showSelectionToolbar(clientRect, containerRect) {
+          if (!textLayerEl || !clientRect) return;
+          if (!selectionToolbarEl) {
+            selectionToolbarEl = document.createElement('button');
+            selectionToolbarEl.type = 'button';
+            selectionToolbarEl.className = 'selection-toolbar-btn';
+            selectionToolbarEl.textContent = 'Comment selection';
+            selectionToolbarEl.addEventListener('click', () => {
+              if (currentSelection) {
+                updateSelectionPreview();
+                if (commentTextInput) {
+                  commentTextInput.focus();
+                }
+              }
+            });
+            textLayerEl.appendChild(selectionToolbarEl);
+          }
+
+          const toolbarWidth = 120;
+          let left =
+            clientRect.left -
+            containerRect.left +
+            clientRect.width / 2 -
+            toolbarWidth / 2;
+          let top = clientRect.top - containerRect.top - 28;
+
+          if (left < 0) left = 0;
+          if (top < 0) top = 0;
+
+          selectionToolbarEl.style.left = `${left}px`;
+          selectionToolbarEl.style.top = `${top}px`;
+        }
+
+        function handleTextLayerMouseUp() {
+          if (!textLayerEl) return;
+          const selection = window.getSelection
+            ? window.getSelection()
+            : null;
+          if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+            clearSelectionState();
+            return;
+          }
+
+          const range = selection.getRangeAt(0);
+          if (!range || !textLayerEl.contains(range.commonAncestorContainer)) {
+            clearSelectionState();
+            return;
+          }
+
+          const selectedText = selection.toString().trim();
+          if (!selectedText) {
+            clearSelectionState();
+            return;
+          }
+
+          const containerRect = textLayerEl.getBoundingClientRect();
+          const rects = [];
+          const clientRects = range.getClientRects();
+          for (const r of clientRects) {
+            const relativeLeft = r.left - containerRect.left;
+            const relativeTop = r.top - containerRect.top;
+            rects.push({
+              x: containerRect.width ? relativeLeft / containerRect.width : 0,
+              y: containerRect.height ? relativeTop / containerRect.height : 0,
+              width: containerRect.width ? r.width / containerRect.width : 0,
+              height: containerRect.height ? r.height / containerRect.height : 0,
+            });
+          }
+
+          if (!rects.length) {
+            clearSelectionState();
+            return;
+          }
+
+          currentSelection = {
+            pageNumber: currentPage,
+            selectedText,
+            rects,
+          };
+
+          console.log('Viewer selection captured', currentSelection);
+
+          updateSelectionPreview();
+
+          const lastClientRect =
+            clientRects[clientRects.length - 1] || clientRects[0];
+          showSelectionToolbar(lastClientRect, containerRect);
         }
 
         function renderCommentsForPage(pageNum) {
@@ -293,6 +651,9 @@
           for (const c of filtered) {
             const item = document.createElement('div');
             item.className = 'comment-item';
+            if (typeof c.id === 'number' || typeof c.id === 'string') {
+              item.dataset.commentId = String(c.id);
+            }
 
             const meta = document.createElement('div');
             meta.className = 'comment-meta';
@@ -304,9 +665,70 @@
             meta.textContent = parts.join(' • ');
             item.appendChild(meta);
 
+            if (c.selectedText) {
+              const highlightDiv = document.createElement('div');
+              highlightDiv.className = 'comment-highlight-preview';
+              const rawSel = String(c.selectedText || '').trim();
+              const maxLen = 160;
+              const shortSel =
+                rawSel.length > maxLen
+                  ? `${rawSel.slice(0, maxLen)}…`
+                  : rawSel;
+              highlightDiv.textContent = `“${shortSel}”`;
+              item.appendChild(highlightDiv);
+            }
+
             const textDiv = document.createElement('div');
             textDiv.textContent = c.text;
             item.appendChild(textDiv);
+
+            const badgeParts = [];
+            if (c.category) {
+              badgeParts.push(String(c.category));
+            }
+            if (c.severity) {
+              badgeParts.push(`Severity: ${c.severity}`);
+            }
+            if (c.status) {
+              badgeParts.push(`Status: ${c.status}`);
+            }
+            if (badgeParts.length > 0) {
+              const badgesDiv = document.createElement('div');
+              badgesDiv.className = 'comment-badges';
+              badgesDiv.textContent = badgeParts.join(' • ');
+              item.appendChild(badgesDiv);
+            }
+
+            item.addEventListener('click', () => {
+              if (
+                !highlightLayerEl ||
+                !canvasEl ||
+                !Array.isArray(c.rects) ||
+                c.rects.length === 0
+              ) {
+                return;
+              }
+              const firstRect = c.rects[0];
+              if (
+                !firstRect ||
+                typeof firstRect.y !== 'number' ||
+                typeof firstRect.height !== 'number'
+              ) {
+                return;
+              }
+
+              const frameEl = document.querySelector('.viewer-frame-wrapper');
+              if (!frameEl) return;
+
+              const targetY =
+                firstRect.y * canvasEl.height -
+                Math.max(0, (frameEl.clientHeight || 0) * 0.2);
+
+              frameEl.scrollTo({
+                top: targetY,
+                behavior: 'smooth',
+              });
+            });
 
             commentsBody.appendChild(item);
           }
@@ -338,9 +760,15 @@
               pageNumber: Number(row.pageNumber) || 1,
               text: row.text || '',
               author: row.author || '',
+              selectedText: row.selectedText || '',
+              rects: Array.isArray(row.rects) ? row.rects : undefined,
+              category: row.category || '',
+              severity: row.severity || '',
+              status: row.status || '',
             }));
 
             renderCommentsForPage(currentPage);
+            renderHighlightsForPage(currentPage);
           } catch (err) {
             console.error('Error loading comments:', err);
           }
@@ -361,6 +789,8 @@
             pendingPage = pageNum;
             return;
           }
+
+          clearSelectionState();
 
           isRendering = true;
           setStatus(`Loading page ${pageNum}…`, false);
@@ -384,6 +814,32 @@
             };
 
             await page.render(renderContext).promise;
+
+            if (
+              textLayerEl &&
+              window['pdfjsLib'] &&
+              typeof window['pdfjsLib'].renderTextLayer === 'function'
+            ) {
+              textLayerEl.innerHTML = '';
+              textLayerEl.style.width = `${viewport.width}px`;
+              textLayerEl.style.height = `${viewport.height}px`;
+
+              try {
+                const textContent = await page.getTextContent();
+                const task = window['pdfjsLib'].renderTextLayer({
+                  textContent,
+                  container: textLayerEl,
+                  viewport,
+                  textDivs: [],
+                });
+                if (task && task.promise) {
+                  await task.promise;
+                }
+              } catch (textErr) {
+                console.error('Error rendering text layer:', textErr);
+              }
+            }
+
             currentPage = pageNum;
             setStatus('', false);
           } catch (renderErr) {
@@ -404,6 +860,7 @@
             }
 
             renderCommentsForPage(currentPage);
+            renderHighlightsForPage(currentPage);
           }
         }
 
@@ -468,6 +925,22 @@
             );
           }
 
+          if (textLayerEl) {
+            textLayerEl.addEventListener('mouseup', handleTextLayerMouseUp);
+          }
+
+          document.addEventListener('selectionchange', () => {
+            const sel = window.getSelection ? window.getSelection() : null;
+            if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+              return;
+            }
+            const range = sel.getRangeAt(0);
+            if (!textLayerEl || !range) return;
+            if (!textLayerEl.contains(range.commonAncestorContainer)) {
+              clearSelectionState();
+            }
+          });
+
           if (prevBtn) {
             prevBtn.addEventListener('click', () => {
               if (currentPage > 1) {
@@ -518,6 +991,49 @@
                   commentErrorEl.textContent = '';
                 }
 
+                const payload = {
+                  pageNumber: currentPage,
+                  text,
+                  author: author || undefined,
+                };
+
+                if (
+                  currentSelection &&
+                  currentSelection.selectedText &&
+                  Array.isArray(currentSelection.rects) &&
+                  currentSelection.rects.length > 0
+                ) {
+                  payload.selectedText = currentSelection.selectedText;
+                  payload.rects = currentSelection.rects;
+                }
+
+                if (commentCategorySelect) {
+                  const categoryVal = String(
+                    (commentCategorySelect).value || '',
+                  ).trim();
+                  if (categoryVal) {
+                    payload.category = categoryVal;
+                  }
+                }
+
+                if (commentSeveritySelect) {
+                  const severityVal = String(
+                    (commentSeveritySelect).value || '',
+                  ).trim();
+                  if (severityVal) {
+                    payload.severity = severityVal;
+                  }
+                }
+
+                if (commentStatusSelect) {
+                  const statusVal = String(
+                    (commentStatusSelect).value || '',
+                  ).trim();
+                  if (statusVal) {
+                    payload.status = statusVal;
+                  }
+                }
+
                 const res = await fetch(
                   `/api/documents/${encodeURIComponent(
                     currentDocId,
@@ -527,11 +1043,7 @@
                     headers: {
                       'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({
-                      pageNumber: currentPage,
-                      text,
-                      author: author || undefined,
-                    }),
+                    body: JSON.stringify(payload),
                   },
                 );
 
@@ -556,15 +1068,29 @@
 
                 const newComment = {
                   id: json.id,
-                  pageNumber: currentPage,
+                  pageNumber:
+                    typeof json.pageNumber === 'number'
+                      ? json.pageNumber
+                      : currentPage,
                   text,
                   author: author || '',
+                  selectedText: json.selectedText || '',
+                  rects: Array.isArray(json.rects)
+                    ? json.rects
+                    : currentSelection && Array.isArray(currentSelection.rects)
+                    ? currentSelection.rects
+                    : undefined,
+                  category: json.category || '',
+                  severity: json.severity || '',
+                  status: json.status || '',
                 };
                 allComments.push(newComment);
 
                 commentTextInput.value = '';
+                clearSelectionState();
                 updateCommentSubmitState();
                 renderCommentsForPage(currentPage);
+                renderHighlightsForPage(currentPage);
               } catch (err) {
                 console.error('Error saving comment:', err);
                 if (commentErrorEl) {

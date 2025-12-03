@@ -273,6 +273,11 @@ export async function initDb(): Promise<void> {
       page_number   INT UNSIGNED NOT NULL,
       comment_text  TEXT         NOT NULL,
       author        VARCHAR(64)  NULL,
+      selected_text TEXT         NULL,
+      rects_json    JSON         NULL,
+      category      VARCHAR(64)  NULL,
+      severity      VARCHAR(32)  NULL,
+      status        VARCHAR(32)  NULL,
       created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       KEY idx_comments_doc_page (document_id, page_number),
@@ -376,6 +381,69 @@ export async function initDb(): Promise<void> {
   await db.query(createDocumentAppointmentsTableSQL);
   await db.query(createDocumentCommunicationsTableSQL);
   await db.query(createDocumentCommentsTableSQL);
+  // Backfill for existing installations: ensure new highlight/metadata columns exist on document_comments.
+  const [commentSelectedTextCols] = (await db.query(
+    "SHOW COLUMNS FROM document_comments LIKE 'selected_text'",
+  )) as any[];
+  if (
+    !Array.isArray(commentSelectedTextCols) ||
+    commentSelectedTextCols.length === 0
+  ) {
+    await db.query(
+      `
+        ALTER TABLE document_comments
+        ADD COLUMN selected_text TEXT NULL AFTER author
+      `,
+    );
+  }
+
+  const [commentRectsCols] = (await db.query(
+    "SHOW COLUMNS FROM document_comments LIKE 'rects_json'",
+  )) as any[];
+  if (!Array.isArray(commentRectsCols) || commentRectsCols.length === 0) {
+    await db.query(
+      `
+        ALTER TABLE document_comments
+        ADD COLUMN rects_json JSON NULL AFTER selected_text
+      `,
+    );
+  }
+
+  const [commentCategoryCols] = (await db.query(
+    "SHOW COLUMNS FROM document_comments LIKE 'category'",
+  )) as any[];
+  if (!Array.isArray(commentCategoryCols) || commentCategoryCols.length === 0) {
+    await db.query(
+      `
+        ALTER TABLE document_comments
+        ADD COLUMN category VARCHAR(64) NULL AFTER rects_json
+      `,
+    );
+  }
+
+  const [commentSeverityCols] = (await db.query(
+    "SHOW COLUMNS FROM document_comments LIKE 'severity'",
+  )) as any[];
+  if (!Array.isArray(commentSeverityCols) || commentSeverityCols.length === 0) {
+    await db.query(
+      `
+        ALTER TABLE document_comments
+        ADD COLUMN severity VARCHAR(32) NULL AFTER category
+      `,
+    );
+  }
+
+  const [commentStatusCols] = (await db.query(
+    "SHOW COLUMNS FROM document_comments LIKE 'status'",
+  )) as any[];
+  if (!Array.isArray(commentStatusCols) || commentStatusCols.length === 0) {
+    await db.query(
+      `
+        ALTER TABLE document_comments
+        ADD COLUMN status VARCHAR(32) NULL AFTER severity
+      `,
+    );
+  }
   await db.query(createTaxonomyCategoriesTableSQL);
   await db.query(createTaxonomyKeywordsTableSQL);
   await db.query(createTaxonomySubkeywordsTableSQL);
