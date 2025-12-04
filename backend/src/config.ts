@@ -21,6 +21,10 @@ export interface AppConfig {
   dbUser: string;
   dbPassword: string;
   dbName: string;
+  highlightColor1: string;
+  highlightColor2: string;
+  highlightColor3: string;
+  highlightOpacity: number;
 }
 
 const port = Number(process.env.PORT) || 4000;
@@ -60,6 +64,18 @@ const dbUser = process.env.DB_USER || '';
 const dbPassword = process.env.DB_PASSWORD || '';
 const dbName = process.env.DB_NAME || '';
 
+const highlightColor1 = process.env.HIGHLIGHT_COLOR_1 || '#FACC15';
+const highlightColor2 = process.env.HIGHLIGHT_COLOR_2 || '#22C55E';
+const highlightColor3 = process.env.HIGHLIGHT_COLOR_3 || '#F97316';
+
+let highlightOpacity = Number(process.env.HIGHLIGHT_OPACITY || '0.35');
+if (!Number.isFinite(highlightOpacity) || highlightOpacity <= 0) {
+  highlightOpacity = 0.35;
+}
+if (highlightOpacity > 1) {
+  highlightOpacity = 1;
+}
+
 if (!appPassword) {
   console.warn('APP_PASSWORD is not set. Protected routes will reject requests.');
 }
@@ -95,4 +111,8 @@ export const config: AppConfig = {
   dbUser,
   dbPassword,
   dbName,
+  highlightColor1,
+  highlightColor2,
+  highlightColor3,
+  highlightOpacity,
 };

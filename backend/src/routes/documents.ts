@@ -2097,6 +2097,7 @@ router.get(
             c.category,
             c.severity,
             c.status,
+            c.highlight_color,
             c.created_at
           FROM document_comments c
           JOIN documents d ON d.id = c.document_id
@@ -2147,6 +2148,9 @@ router.get(
             status:
               (row.status as string | null | undefined) ??
               undefined,
+            color:
+              (row.highlight_color as string | null | undefined) ??
+              undefined,
             createdAt: (row.created_at as Date | string | null) ?? null,
           }))
         : [];
@@ -2180,6 +2184,7 @@ router.post(
         category?: string;
         severity?: string;
         status?: string;
+        color?: string;
       };
 
       const pageNumberRaw = body.pageNumber;
@@ -2195,6 +2200,8 @@ router.post(
         typeof body.severity === 'string' ? body.severity : '';
       const statusRaw =
         typeof body.status === 'string' ? body.status : '';
+      const colorRaw =
+        typeof body.color === 'string' ? body.color : '';
 
       const pageNumber = Number(pageNumberRaw);
       if (!Number.isFinite(pageNumber) || pageNumber < 1) {
@@ -2285,6 +2292,12 @@ router.post(
         status = normalized;
       }
 
+      let highlightColor: string | null = null;
+      if (colorRaw.trim()) {
+        const trimmed = colorRaw.trim();
+        highlightColor = trimmed.slice(0, 32);
+      }
+
       const db = await getDb();
       const [docRows] = (await db.query(
         `
@@ -2315,9 +2328,10 @@ router.post(
             rects_json,
             category,
             severity,
-            status
+            status,
+            highlight_color
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           documentId,
@@ -2330,6 +2344,7 @@ router.post(
           category,
           severity,
           status,
+          highlightColor,
         ],
       )) as any[];
 
@@ -2350,6 +2365,7 @@ router.post(
         category: category ?? undefined,
         severity: severity ?? undefined,
         status: status ?? undefined,
+        color: highlightColor ?? undefined,
       });
     } catch (error) {
       console.error('Error in POST /api/documents/:id/comments:', error);

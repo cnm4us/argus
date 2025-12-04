@@ -219,6 +219,36 @@
         padding: 0 4px;
         border-radius: 4px;
       }
+      .comments-toolbar {
+        display: flex;
+        gap: 0.25rem;
+        align-items: center;
+        margin-bottom: 0.35rem;
+        font-size: 0.75rem;
+        color: #374151;
+      }
+      .comments-toolbar-label {
+        margin-right: 0.25rem;
+      }
+      .comments-color-swatch {
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        border: 1px solid #d1d5db;
+        cursor: pointer;
+        box-sizing: border-box;
+      }
+      .comments-color-swatch.active {
+        outline: 2px solid #2563eb;
+        outline-offset: 1px;
+      }
+      .comments-eraser-swatch {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.7rem;
+        background: #ffffff;
+      }
       .comments-page-note-hint {
         margin-top: 0.25rem;
         font-size: 0.75rem;
@@ -251,7 +281,7 @@
       }
       .pdf-highlight-box {
         position: absolute;
-        background: rgba(250, 204, 21, 0.35);
+        background: transparent;
         border-radius: 2px;
       }
       .pdf-text-layer {
@@ -315,6 +345,31 @@
           </div>
         </div>
         <aside class="viewer-comments">
+          <div class="comments-toolbar">
+            <span class="comments-toolbar-label">Highlighter:</span>
+            <div
+              id="comment-color-1"
+              class="comments-color-swatch"
+              title="Highlighter 1"
+            ></div>
+            <div
+              id="comment-color-2"
+              class="comments-color-swatch"
+              title="Highlighter 2"
+            ></div>
+            <div
+              id="comment-color-3"
+              class="comments-color-swatch"
+              title="Highlighter 3"
+            ></div>
+            <div
+              id="comment-eraser"
+              class="comments-color-swatch comments-eraser-swatch"
+              title="Clear color"
+            >
+              ×
+            </div>
+          </div>
           <div class="comments-header">Comments</div>
           <div id="comments-body" class="comments-body"></div>
           <div class="comments-input">
@@ -408,6 +463,12 @@
         const commentStatusSelect = document.getElementById('comment-status');
         const textLayerEl = document.getElementById('pdf-text-layer');
         const highlightLayerEl = document.getElementById('pdf-highlight-layer');
+        const colorSwatchEls = [
+          document.getElementById('comment-color-1'),
+          document.getElementById('comment-color-2'),
+          document.getElementById('comment-color-3'),
+        ];
+        const eraserSwatchEl = document.getElementById('comment-eraser');
 
         let pdfDoc = null;
         let currentPage = 1;
@@ -419,6 +480,91 @@
         let currentSelection = null;
         let selectionToolbarEl = null;
         let currentUser = null;
+        let highlightColors = [];
+        let highlightOpacity = 0.35;
+        let activeHighlightColor = null;
+
+        function hexToRgba(hex, alpha) {
+          if (typeof hex !== 'string') return null;
+          let value = hex.trim();
+          if (value.startsWith('#')) {
+            value = value.slice(1);
+          }
+          if (value.length === 3) {
+            value =
+              value[0] +
+              value[0] +
+              value[1] +
+              value[1] +
+              value[2] +
+              value[2];
+          }
+          if (value.length !== 6) return null;
+          const r = parseInt(value.slice(0, 2), 16);
+          const g = parseInt(value.slice(2, 4), 16);
+          const b = parseInt(value.slice(4, 6), 16);
+          if (
+            Number.isNaN(r) ||
+            Number.isNaN(g) ||
+            Number.isNaN(b)
+          ) {
+            return null;
+          }
+          const a = typeof alpha === 'number' ? alpha : 0.35;
+          return `rgba(${r}, ${g}, ${b}, ${a})`;
+        }
+
+        function getEffectiveHighlightColor(color) {
+          const base =
+            typeof color === 'string' && color.trim()
+              ? color.trim()
+              : highlightColors[0] || '#FACC15';
+          const rgba = hexToRgba(base, highlightOpacity);
+          return rgba || 'rgba(250, 204, 21, 0.35)';
+        }
+
+        function setActiveHighlightIndex(index) {
+          activeHighlightColor =
+            index >= 0 && index < highlightColors.length
+              ? highlightColors[index]
+              : null;
+          colorSwatchEls.forEach((el, i) => {
+            if (!el) return;
+            if (i === index) {
+              el.classList.add('active');
+            } else {
+              el.classList.remove('active');
+            }
+          });
+          if (eraserSwatchEl) {
+            if (activeHighlightColor === null) {
+              eraserSwatchEl.classList.add('active');
+            } else {
+              eraserSwatchEl.classList.remove('active');
+            }
+          }
+        }
+
+        if (colorSwatchEls[0]) {
+          colorSwatchEls[0].addEventListener('click', () => {
+            setActiveHighlightIndex(0);
+          });
+        }
+        if (colorSwatchEls[1]) {
+          colorSwatchEls[1].addEventListener('click', () => {
+            setActiveHighlightIndex(1);
+          });
+        }
+        if (colorSwatchEls[2]) {
+          colorSwatchEls[2].addEventListener('click', () => {
+            setActiveHighlightIndex(2);
+          });
+        }
+        if (eraserSwatchEl) {
+          eraserSwatchEl.addEventListener('click', () => {
+            setActiveHighlightIndex(-1);
+          });
+        }
 
         function setStatus(message, isError) {
           if (!statusEl) return;
@@ -465,6 +611,7 @@
 
           filtered.forEach((c) => {
             const rects = Array.isArray(c.rects) ? c.rects : [];
+            const colorStyle = getEffectiveHighlightColor(c.color);
             rects.forEach((rect) => {
               if (
                 !rect ||
@@ -478,6 +625,7 @@
 
               const box = document.createElement('div');
               box.className = 'pdf-highlight-box';
+              box.style.background = colorStyle;
               box.style.left = `${rect.x * width}px`;
               box.style.top = `${rect.y * height}px`;
               box.style.width = `${rect.width * width}px`;
@@ -881,6 +1029,7 @@
               category: row.category || '',
               severity: row.severity || '',
               status: row.status || '',
+              color: row.color || '',
             }));
 
             renderCommentsForPage(currentPage);
@@ -1038,6 +1187,51 @@
               console.error('Error loading current user session:', sessionErr);
             }
 
+            try {
+              const paletteRes = await fetch('/api/viewer/highlights');
+              if (paletteRes.ok) {
+                const paletteJson = await paletteRes.json().catch(() => null);
+                if (
+                  paletteJson &&
+                  Array.isArray(paletteJson.colors) &&
+                  paletteJson.colors.length > 0
+                ) {
+                  highlightColors = paletteJson.colors.filter(
+                    (c) => typeof c === 'string' && c.trim().length > 0,
+                  );
+                }
+                if (
+                  paletteJson &&
+                  typeof paletteJson.opacity === 'number' &&
+                  Number.isFinite(paletteJson.opacity)
+                ) {
+                  highlightOpacity = paletteJson.opacity;
+                }
+              }
+            } catch (paletteErr) {
+              console.error('Error loading highlight palette:', paletteErr);
+            }
+
+            if (highlightColors.length === 0) {
+              highlightColors = ['#FACC15', '#22C55E', '#F97316'];
+            }
+
+            colorSwatchEls.forEach((el, index) => {
+              if (!el) return;
+              const color = highlightColors[index];
+              if (color) {
+                el.style.background = color;
+              } else {
+                el.style.background = '#ffffff';
+              }
+            });
+
+            if (eraserSwatchEl) {
+              eraserSwatchEl.style.borderStyle = 'dashed';
+            }
+
+            setActiveHighlightIndex(0);
+
             const pdfjsLib = window['pdfjsLib'];
             const loadingTask = pdfjsLib.getDocument({ url });
             pdfDoc = await loadingTask.promise;
@@ -1156,6 +1350,10 @@
                   }
                 }
 
+                if (activeHighlightColor) {
+                  payload.color = activeHighlightColor;
+                }
+
                 const res = await fetch(
                   `/api/documents/${encodeURIComponent(
                     currentDocId,
@@ -1205,6 +1403,7 @@
                   category: json.category || '',
                   severity: json.severity || '',
                   status: json.status || '',
+                  color: json.color || activeHighlightColor || '',
                 };
                 allComments.push(newComment);
 

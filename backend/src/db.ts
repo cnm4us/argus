@@ -293,6 +293,7 @@ export async function initDb(): Promise<void> {
       category      VARCHAR(64)  NULL,
       severity      VARCHAR(32)  NULL,
       status        VARCHAR(32)  NULL,
+      highlight_color VARCHAR(32) NULL,
       created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       KEY idx_comments_doc_page (document_id, page_number),
@@ -474,6 +475,21 @@ export async function initDb(): Promise<void> {
       `
         ALTER TABLE document_comments
         ADD COLUMN status VARCHAR(32) NULL AFTER severity
+      `,
+    );
+  }
+
+  const [commentHighlightColorCols] = (await db.query(
+    "SHOW COLUMNS FROM document_comments LIKE 'highlight_color'",
+  )) as any[];
+  if (
+    !Array.isArray(commentHighlightColorCols) ||
+    commentHighlightColorCols.length === 0
+  ) {
+    await db.query(
+      `
+        ALTER TABLE document_comments
+        ADD COLUMN highlight_color VARCHAR(32) NULL AFTER status
       `,
     );
   }

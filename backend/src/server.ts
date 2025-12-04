@@ -12,6 +12,7 @@ import templatesRouter from './routes/templates';
 import searchRouter from './routes/search';
 import filesRouter from './routes/files';
 import authRouter from './routes/auth';
+import viewerConfigRouter from './routes/viewerConfig';
 import { initDb } from './db';
 import { SESSION_COOKIE_NAME, verifySessionToken } from './session';
 
@@ -116,6 +117,9 @@ app.use('/api/search', searchRouter);
 
 // File streaming routes.
 app.use('/api/files', filesRouter);
+
+// Viewer configuration routes.
+app.use('/api/viewer', viewerConfigRouter);
 
 // Auth routes.
 app.use('/api/auth', authRouter);
