@@ -154,6 +154,11 @@
         border-bottom: none;
         padding-bottom: 0;
       }
+      .comment-item.comment-active {
+        background: #eef2ff;
+        border-radius: 4px;
+        border-bottom-color: #4f46e5;
+      }
       .comment-meta {
         font-size: 0.75rem;
         color: #6b7280;
@@ -480,6 +485,8 @@
         let currentSelection = null;
         let selectionToolbarEl = null;
         let currentUser = null;
+        let activeCommentId = null;
+        let editingCommentId = null;
         let highlightColors = [];
         let highlightOpacity = 0.35;
         let activeHighlightColor = null;
@@ -545,24 +552,161 @@
           }
         }
 
+        function updateHighlightPointerEvents() {
+          if (!highlightLayerEl || !textLayerEl) return;
+          if (activeHighlightColor === null) {
+            // Eraser mode: allow clicking highlights, disable text selection.
+            highlightLayerEl.style.pointerEvents = 'auto';
+            textLayerEl.style.pointerEvents = 'none';
+          } else {
+            // Highlight mode: enable text selection, ignore highlight clicks.
+            highlightLayerEl.style.pointerEvents = 'none';
+            textLayerEl.style.pointerEvents = 'auto';
+          }
+        }
+
         if (colorSwatchEls[0]) {
           colorSwatchEls[0].addEventListener('click', () => {
             setActiveHighlightIndex(0);
+            updateHighlightPointerEvents();
           });
         }
         if (colorSwatchEls[1]) {
           colorSwatchEls[1].addEventListener('click', () => {
             setActiveHighlightIndex(1);
+            updateHighlightPointerEvents();
           });
         }
         if (colorSwatchEls[2]) {
           colorSwatchEls[2].addEventListener('click', () => {
             setActiveHighlightIndex(2);
+            updateHighlightPointerEvents();
           });
         }
         if (eraserSwatchEl) {
           eraserSwatchEl.addEventListener('click', () => {
             setActiveHighlightIndex(-1);
+            updateHighlightPointerEvents();
+          });
+        }
+
+        async function handleHighlightLayerErase(event) {
+          if (activeHighlightColor !== null) {
+            return;
+          }
+          const target = event.target;
+          if (!(target instanceof HTMLElement)) {
+            return;
+          }
+          const rectIndexAttr = target.dataset.rectIndex;
+          if (rectIndexAttr === undefined) {
+            return;
+          }
+          const rectIndex = Number.parseInt(rectIndexAttr, 10);
+          if (!Number.isFinite(rectIndex)) {
+            return;
+          }
+
+          const isPreview = target.dataset.preview === '1';
+
+          if (isPreview) {
+            if (
+              !currentSelection ||
+              !Array.isArray(currentSelection.rects) ||
+              rectIndex < 0 ||
+              rectIndex >= currentSelection.rects.length
+            ) {
+              return;
+            }
+
+            currentSelection.rects.splice(rectIndex, 1);
+
+            if (
+              !currentSelection.rects ||
+              currentSelection.rects.length === 0
+            ) {
+              currentSelection = null;
+              updateSelectionPreview();
+            }
+
+            renderHighlightsForPage(currentPage);
+            return;
+          }
+
+          const commentIdAttr = target.dataset.commentId;
+          if (!commentIdAttr) {
+            return;
+          }
+          const commentId = Number.parseInt(commentIdAttr, 10);
+          if (!Number.isFinite(commentId)) {
+            return;
+          }
+
+          // Eraser only operates on the currently active comment's saved
+          // highlights so comment-scoped actions do not affect others.
+          if (
+            activeCommentId === null ||
+            typeof activeCommentId !== 'number' ||
+            commentId !== activeCommentId
+          ) {
+            return;
+          }
+
+          const comment = allComments.find(
+            (c) => Number.parseInt(String(c.id), 10) === commentId,
+          );
+          if (!comment || !Array.isArray(comment.rects)) {
+            return;
+          }
+          if (rectIndex < 0 || rectIndex >= comment.rects.length) {
+            return;
+          }
+
+          comment.rects.splice(rectIndex, 1);
+
+          try {
+            const res = await fetch(
+              `/api/documents/${encodeURIComponent(
+                currentDocId,
+              )}/comments/${encodeURIComponent(commentId)}`,
+              {
+                method: 'PATCH',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  rects: comment.rects,
+                }),
+              },
+            );
+
+            if (!res.ok && res.status !== 204) {
+              console.error(
+                'Failed to update comment rects:',
+                res.status,
+              );
+              window.alert(
+                'Failed to update highlight. Please try again.',
+              );
+              await loadComments(currentDocId);
+              return;
+            }
+
+            renderHighlightsForPage(currentPage);
+          } catch (err) {
+            console.error('Error updating comment rects:', err);
+            window.alert(
+              'Unexpected error updating highlight. See console for details.',
+            );
+          }
+        }
+
+        if (highlightLayerEl) {
+          highlightLayerEl.addEventListener('click', (event) => {
+            void handleHighlightLayerErase(event);
+          });
+          highlightLayerEl.addEventListener('dblclick', (event) => {
+            void handleHighlightLayerErase(event);
           });
         }
 
@@ -585,26 +729,127 @@
           }
         }
 
+        function setActiveComment(commentId) {
+          if (
+            typeof commentId === 'number' &&
+            Number.isFinite(commentId) &&
+            commentId > 0
+          ) {
+            activeCommentId = commentId;
+            editingCommentId = commentId;
+          } else {
+            activeCommentId = null;
+            editingCommentId = null;
+          }
+
+          if (commentsBody) {
+            const items = commentsBody.querySelectorAll('.comment-item');
+            items.forEach((el) => {
+              if (!(el instanceof HTMLElement)) return;
+              const idAttr = el.dataset.commentId;
+              const idNum = idAttr
+                ? Number.parseInt(idAttr, 10)
+                : NaN;
+              if (
+                activeCommentId !== null &&
+                Number.isFinite(idNum) &&
+                idNum === activeCommentId
+              ) {
+                el.classList.add('comment-active');
+              } else {
+                el.classList.remove('comment-active');
+              }
+            });
+          }
+
+          renderHighlightsForPage(currentPage);
+
+          if (editingCommentId !== null) {
+            const active = allComments.find(
+              (c) =>
+                typeof c.id === 'number' && c.id === editingCommentId,
+            );
+            if (active) {
+              if (commentTextInput) {
+                commentTextInput.value = active.text || '';
+              }
+              if (commentCategorySelect) {
+                commentCategorySelect.value = active.category || '';
+              }
+              if (commentSeveritySelect) {
+                commentSeveritySelect.value = active.severity || '';
+              }
+              if (commentStatusSelect) {
+                commentStatusSelect.value = active.status || 'open';
+              }
+              if (commentSubmitBtn) {
+                commentSubmitBtn.textContent = 'Update comment';
+              }
+
+              if (active.color) {
+                const idx = highlightColors.findIndex(
+                  (c) =>
+                    typeof c === 'string' &&
+                    c.toLowerCase() === active.color.toLowerCase(),
+                );
+                if (idx >= 0) {
+                  setActiveHighlightIndex(idx);
+                } else {
+                  activeHighlightColor = active.color;
+                  colorSwatchEls.forEach((el) => {
+                    if (el) el.classList.remove('active');
+                  });
+                  if (eraserSwatchEl) {
+                    eraserSwatchEl.classList.remove('active');
+                  }
+                }
+              }
+            }
+          } else {
+            if (commentTextInput) {
+              commentTextInput.value = '';
+            }
+            if (commentCategorySelect) {
+              commentCategorySelect.value = '';
+            }
+            if (commentSeveritySelect) {
+              commentSeveritySelect.value = '';
+            }
+            if (commentStatusSelect) {
+              commentStatusSelect.value = 'open';
+            }
+            if (commentSubmitBtn) {
+              commentSubmitBtn.textContent = 'Add comment';
+            }
+          }
+
+          updateCommentSubmitState();
+        }
+
         function renderHighlightsForPage(pageNum) {
           if (!highlightLayerEl || !canvasEl) return;
           highlightLayerEl.innerHTML = '';
-
-          if (!Array.isArray(allComments) || allComments.length === 0) {
-            return;
-          }
 
           const width = canvasEl.width;
           const height = canvasEl.height;
           if (!width || !height) return;
 
-          const filtered = allComments.filter(
-            (c) =>
-              c.pageNumber === pageNum &&
-              Array.isArray(c.rects) &&
-              c.rects.length > 0,
-          );
+          const filtered = Array.isArray(allComments)
+            ? allComments.filter(
+                (c) =>
+                  c.pageNumber === pageNum &&
+                  Array.isArray(c.rects) &&
+                  c.rects.length > 0,
+              )
+            : [];
 
-          if (filtered.length === 0) return;
+          const hasPreview =
+            currentSelection &&
+            currentSelection.pageNumber === pageNum &&
+            Array.isArray(currentSelection.rects) &&
+            currentSelection.rects.length > 0;
+
+          if (filtered.length === 0 && !hasPreview) return;
 
           highlightLayerEl.style.width = `${width}px`;
           highlightLayerEl.style.height = `${height}px`;
@@ -612,7 +857,7 @@
           filtered.forEach((c) => {
             const rects = Array.isArray(c.rects) ? c.rects : [];
             const colorStyle = getEffectiveHighlightColor(c.color);
-            rects.forEach((rect) => {
+            rects.forEach((rect, rectIndex) => {
               if (
                 !rect ||
                 typeof rect.x !== 'number' ||
@@ -626,13 +871,60 @@
               const box = document.createElement('div');
               box.className = 'pdf-highlight-box';
               box.style.background = colorStyle;
+              if (
+                activeCommentId !== null &&
+                typeof c.id === 'number' &&
+                c.id === activeCommentId
+              ) {
+                box.style.outline = '2px solid rgba(37, 99, 235, 0.8)';
+              }
               box.style.left = `${rect.x * width}px`;
               box.style.top = `${rect.y * height}px`;
               box.style.width = `${rect.width * width}px`;
               box.style.height = `${rect.height * height}px`;
+              if (typeof c.id !== 'undefined') {
+                box.dataset.commentId = String(c.id);
+                box.dataset.rectIndex = String(rectIndex);
+              }
               highlightLayerEl.appendChild(box);
             });
           });
+
+          // Render live preview for the current selection, if it is on this page.
+          if (hasPreview) {
+            const previewColor = getEffectiveHighlightColor(
+              activeHighlightColor,
+            );
+            currentSelection.rects.forEach((rect, rectIndex) => {
+              if (
+                !rect ||
+                typeof rect.x !== 'number' ||
+                typeof rect.y !== 'number' ||
+                typeof rect.width !== 'number' ||
+                typeof rect.height !== 'number'
+              ) {
+                return;
+              }
+              const box = document.createElement('div');
+              box.className = 'pdf-highlight-box';
+              box.style.background = previewColor;
+              box.style.left = `${rect.x * width}px`;
+              box.style.top = `${rect.y * height}px`;
+              box.style.width = `${rect.width * width}px`;
+              box.style.height = `${rect.height * height}px`;
+              box.dataset.preview = '1';
+              box.dataset.rectIndex = String(rectIndex);
+              if (
+                activeCommentId !== null &&
+                typeof activeCommentId === 'number'
+              ) {
+                box.dataset.commentId = String(activeCommentId);
+              }
+              highlightLayerEl.appendChild(box);
+            });
+          }
+
+          updateHighlightPointerEvents();
         }
 
         function clearSelectionState() {
@@ -648,6 +940,8 @@
           if (pageNoteHintEl) {
             pageNoteHintEl.style.display = 'block';
           }
+          // Clear any preview highlights by re-rendering persisted highlights only.
+          renderHighlightsForPage(currentPage);
         }
 
         function updateSelectionPreview() {
@@ -712,7 +1006,7 @@
           selectionToolbarEl.style.top = `${top}px`;
         }
 
-        function handleTextLayerMouseUp() {
+        function handleTextLayerMouseUp(event) {
           if (!textLayerEl) return;
           const selection = window.getSelection
             ? window.getSelection()
@@ -809,11 +1103,37 @@
             return;
           }
 
-          currentSelection = {
-            pageNumber: currentPage,
-            selectedText,
-            rects,
-          };
+          const shouldAppend =
+            event &&
+            (event.ctrlKey || event.metaKey) &&
+            currentSelection &&
+            currentSelection.pageNumber === currentPage &&
+            Array.isArray(currentSelection.rects);
+
+          if (shouldAppend) {
+            const previousText = String(
+              currentSelection.selectedText || '',
+            ).trim();
+            let combinedText = selectedText;
+            if (previousText && selectedText) {
+              combinedText = `${previousText}\n...\n${selectedText}`;
+            } else if (previousText) {
+              combinedText = previousText;
+            }
+            const existingRects = currentSelection.rects.slice();
+            const combinedRects = existingRects.concat(rects);
+            currentSelection = {
+              pageNumber: currentPage,
+              selectedText: combinedText,
+              rects: combinedRects,
+            };
+          } else {
+            currentSelection = {
+              pageNumber: currentPage,
+              selectedText,
+              rects,
+            };
+          }
 
           console.log('Viewer selection captured', currentSelection);
 
@@ -822,6 +1142,7 @@
           const lastClientRect =
             clientRects[clientRects.length - 1] || clientRects[0];
           showSelectionToolbar(lastClientRect, containerRect);
+          renderHighlightsForPage(currentPage);
         }
 
         function renderCommentsForPage(pageNum) {
@@ -962,6 +1283,13 @@
             }
 
             item.addEventListener('click', () => {
+              if (typeof c.id === 'number') {
+                if (activeCommentId === c.id) {
+                  setActiveComment(null);
+                } else {
+                  setActiveComment(c.id);
+                }
+              }
               if (
                 !highlightLayerEl ||
                 !canvasEl ||
@@ -1028,13 +1356,36 @@
               rects: Array.isArray(row.rects) ? row.rects : undefined,
               category: row.category || '',
               severity: row.severity || '',
-              status: row.status || '',
-              color: row.color || '',
-            }));
-
-            renderCommentsForPage(currentPage);
-            renderHighlightsForPage(currentPage);
-          } catch (err) {
+	              status: row.status || '',
+	              color: row.color || '',
+	            }));
+	
+	            renderCommentsForPage(currentPage);
+	            renderHighlightsForPage(currentPage);
+	            if (
+	              editingCommentId !== null &&
+	              !allComments.some(
+	                (c) =>
+	                  typeof c.id === 'number' &&
+	                  c.id === editingCommentId,
+	              )
+	            ) {
+	              setActiveComment(null);
+	            } else if (editingCommentId !== null) {
+	              setActiveComment(editingCommentId);
+	            }
+            if (
+              activeCommentId !== null &&
+              !allComments.some(
+                (c) =>
+                  typeof c.id === 'number' && c.id === activeCommentId,
+              )
+            ) {
+              setActiveComment(null);
+            } else if (activeCommentId !== null) {
+              setActiveComment(activeCommentId);
+            }
+	          } catch (err) {
             console.error('Error loading comments:', err);
           }
         }
@@ -1247,20 +1598,31 @@
             );
           }
 
-          if (textLayerEl) {
-            textLayerEl.addEventListener('mouseup', handleTextLayerMouseUp);
-          }
-
-          document.addEventListener('selectionchange', () => {
-            const sel = window.getSelection ? window.getSelection() : null;
-            if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+          // Capture mouseup anywhere and, if the selection is inside the
+          // text layer, treat it as a text selection for highlighting.
+          document.addEventListener('mouseup', (event) => {
+            if (!textLayerEl) return;
+            const selection = window.getSelection
+              ? window.getSelection()
+              : null;
+            if (
+              !selection ||
+              selection.isCollapsed ||
+              selection.rangeCount === 0
+            ) {
               return;
             }
-            const range = sel.getRangeAt(0);
-            if (!textLayerEl || !range) return;
+            const range = selection.getRangeAt(0);
+            if (!range) return;
             if (!textLayerEl.contains(range.commonAncestorContainer)) {
-              clearSelectionState();
+              return;
             }
+            handleTextLayerMouseUp(event);
+          });
+
+          document.addEventListener('selectionchange', () => {
+            // We no longer clear currentSelection on selectionchange; this
+            // event is kept only for potential future diagnostics.
           });
 
           if (prevBtn) {
@@ -1287,6 +1649,16 @@
                 commentErrorEl.textContent = '';
               }
               updateCommentSubmitState();
+            });
+            commentTextInput.addEventListener('focus', () => {
+              if (
+                currentSelection &&
+                currentSelection.pageNumber === currentPage &&
+                Array.isArray(currentSelection.rects) &&
+                currentSelection.rects.length > 0
+              ) {
+                renderHighlightsForPage(currentPage);
+              }
             });
           }
 
@@ -1354,24 +1726,89 @@
                   payload.color = activeHighlightColor;
                 }
 
-                const res = await fetch(
-                  `/api/documents/${encodeURIComponent(
-                    currentDocId,
-                  )}/comments`,
-                  {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(payload),
-                  },
-                );
+                let res;
+                let json;
 
-                let json = null;
-                try {
-                  json = await res.json();
-                } catch {
+                const isEditing =
+                  editingCommentId !== null &&
+                  allComments.some(
+                    (c) =>
+                      typeof c.id === 'number' && c.id === editingCommentId,
+                  );
+
+                if (isEditing) {
+                  const existing = allComments.find(
+                    (c) =>
+                      typeof c.id === 'number' && c.id === editingCommentId,
+                  );
+
+                  let mergedRects;
+                  if (
+                    existing &&
+                    currentSelection &&
+                    currentSelection.pageNumber === currentPage &&
+                    Array.isArray(currentSelection.rects) &&
+                    currentSelection.rects.length > 0
+                  ) {
+                    const existingRects = Array.isArray(existing.rects)
+                      ? existing.rects.slice()
+                      : [];
+                    mergedRects = existingRects.concat(
+                      currentSelection.rects,
+                    );
+                  }
+
+                  const patchBody = {
+                    text: payload.text,
+                    category: payload.category,
+                    severity: payload.severity,
+                    status: payload.status,
+                    color: payload.color,
+                  };
+
+                  if (mergedRects) {
+                    patchBody.rects = mergedRects;
+                  }
+
+                  res = await fetch(
+                    `/api/documents/${encodeURIComponent(
+                      currentDocId,
+                    )}/comments/${encodeURIComponent(editingCommentId)}`,
+                    {
+                      method: 'PATCH',
+                      headers: {
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify(patchBody),
+                    },
+                  );
+
                   json = null;
+                  try {
+                    json = await res.json();
+                  } catch {
+                    json = null;
+                  }
+                } else {
+                  res = await fetch(
+                    `/api/documents/${encodeURIComponent(
+                      currentDocId,
+                    )}/comments`,
+                    {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify(payload),
+                    },
+                  );
+
+                  json = null;
+                  try {
+                    json = await res.json();
+                  } catch {
+                    json = null;
+                  }
                 }
 
                 if (!res.ok) {
@@ -1386,32 +1823,71 @@
                   return;
                 }
 
-                const newComment = {
-                  id: json.id,
-                  pageNumber:
-                    typeof json.pageNumber === 'number'
-                      ? json.pageNumber
-                      : currentPage,
-                  text: json.text || text,
-                  author: json.author || '',
-                  selectedText: json.selectedText || '',
-                  rects: Array.isArray(json.rects)
-                    ? json.rects
-                    : currentSelection && Array.isArray(currentSelection.rects)
-                    ? currentSelection.rects
-                    : undefined,
-                  category: json.category || '',
-                  severity: json.severity || '',
-                  status: json.status || '',
-                  color: json.color || activeHighlightColor || '',
-                };
-                allComments.push(newComment);
+                if (
+                  editingCommentId !== null &&
+                  res.status === 204
+                ) {
+                  const idx = allComments.findIndex(
+                    (c) =>
+                      typeof c.id === 'number' &&
+                      c.id === editingCommentId,
+                  );
+                  if (idx >= 0) {
+                    const existing = allComments[idx];
+                    existing.text = payload.text || existing.text || '';
+                    existing.category = payload.category || '';
+                    existing.severity = payload.severity || '';
+                    existing.status = payload.status || '';
+                    existing.color =
+                      payload.color || existing.color || '';
+                    if (
+                      currentSelection &&
+                      currentSelection.pageNumber === currentPage &&
+                      Array.isArray(currentSelection.rects) &&
+                      currentSelection.rects.length > 0
+                    ) {
+                      const existingRects = Array.isArray(existing.rects)
+                        ? existing.rects.slice()
+                        : [];
+                      existing.rects = existingRects.concat(
+                        currentSelection.rects,
+                      );
+                    }
+                  }
+                  clearSelectionState();
+                  setActiveComment(editingCommentId);
+                  updateCommentSubmitState();
+                  renderCommentsForPage(currentPage);
+                  renderHighlightsForPage(currentPage);
+                } else if (json && editingCommentId === null) {
+                  const newComment = {
+                    id: json.id,
+                    pageNumber:
+                      typeof json.pageNumber === 'number'
+                        ? json.pageNumber
+                        : currentPage,
+                    text: json.text || text,
+                    author: json.author || '',
+                    selectedText: json.selectedText || '',
+                    rects: Array.isArray(json.rects)
+                      ? json.rects
+                      : currentSelection &&
+                        Array.isArray(currentSelection.rects)
+                      ? currentSelection.rects
+                      : undefined,
+                    category: json.category || '',
+                    severity: json.severity || '',
+                    status: json.status || '',
+                    color: json.color || activeHighlightColor || '',
+                  };
+                  allComments.push(newComment);
 
-                commentTextInput.value = '';
-                clearSelectionState();
-                updateCommentSubmitState();
-                renderCommentsForPage(currentPage);
-                renderHighlightsForPage(currentPage);
+                  commentTextInput.value = '';
+                  clearSelectionState();
+                  updateCommentSubmitState();
+                  renderCommentsForPage(currentPage);
+                  renderHighlightsForPage(currentPage);
+                }
               } catch (err) {
                 console.error('Error saving comment:', err);
                 if (commentErrorEl) {

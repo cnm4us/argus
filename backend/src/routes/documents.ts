@@ -2470,6 +2470,254 @@ router.delete(
   },
 );
 
+// PATCH /api/documents/:id/comments/:commentId
+// Update comment metadata (rects and/or fields like category, severity, status, color).
+router.patch(
+  '/:id/comments/:commentId',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const vectorStoreFileId = (req.params.id || '').trim();
+      const commentIdParam = (req.params.commentId || '').trim();
+
+      if (!vectorStoreFileId) {
+        res.status(400).json({ error: 'Missing document id.' });
+        return;
+      }
+
+      const commentId = Number.parseInt(commentIdParam, 10);
+      if (!Number.isFinite(commentId) || commentId <= 0) {
+        res.status(400).json({ error: 'Invalid comment id.' });
+        return;
+      }
+
+      const body = req.body as {
+        text?: string;
+        rects?: unknown;
+        category?: string;
+        severity?: string;
+        status?: string;
+        color?: string;
+      };
+
+      const rectsProvided = Object.prototype.hasOwnProperty.call(
+        body,
+        'rects',
+      );
+      let rectsJson: string | null | undefined = undefined;
+      if (rectsProvided && Array.isArray(body.rects)) {
+        const cleaned: {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+        }[] = [];
+        for (const r of body.rects) {
+          if (
+            r &&
+            typeof (r as any).x === 'number' &&
+            typeof (r as any).y === 'number' &&
+            typeof (r as any).width === 'number' &&
+            typeof (r as any).height === 'number'
+          ) {
+            const x = Number((r as any).x);
+            const y = Number((r as any).y);
+            const width = Number((r as any).width);
+            const height = Number((r as any).height);
+            if (
+              Number.isFinite(x) &&
+              Number.isFinite(y) &&
+              Number.isFinite(width) &&
+              Number.isFinite(height) &&
+              width > 0 &&
+              height > 0
+            ) {
+              cleaned.push({ x, y, width, height });
+            }
+          }
+        }
+        rectsJson = cleaned.length > 0 ? JSON.stringify(cleaned) : null;
+      }
+
+      const categoryRaw =
+        typeof body.category === 'string' ? body.category : '';
+      const severityRaw =
+        typeof body.severity === 'string' ? body.severity : '';
+      const statusRaw =
+        typeof body.status === 'string' ? body.status : '';
+      const colorRaw =
+        typeof body.color === 'string' ? body.color : '';
+
+      let category: string | null | undefined = undefined;
+      if (Object.prototype.hasOwnProperty.call(body, 'category')) {
+        const trimmed = categoryRaw.trim().slice(0, 64);
+        category = trimmed || null;
+      }
+
+      const allowedSeverities = new Set(['low', 'medium', 'high']);
+      let severity: string | null | undefined = undefined;
+      if (Object.prototype.hasOwnProperty.call(body, 'severity')) {
+        if (severityRaw.trim()) {
+          const normalized = severityRaw.trim().toLowerCase();
+          if (!allowedSeverities.has(normalized)) {
+            res.status(400).json({
+              error:
+                "severity must be one of: 'low', 'medium', or 'high'.",
+            });
+            return;
+          }
+          severity = normalized;
+        } else {
+          severity = null;
+        }
+      }
+
+      const allowedStatuses = new Set(['open', 'resolved']);
+      let status: string | null | undefined = undefined;
+      if (Object.prototype.hasOwnProperty.call(body, 'status')) {
+        if (statusRaw.trim()) {
+          const normalized = statusRaw.trim().toLowerCase();
+          if (!allowedStatuses.has(normalized)) {
+            res.status(400).json({
+              error: "status must be one of: 'open' or 'resolved'.",
+            });
+            return;
+          }
+          status = normalized;
+        } else {
+          status = null;
+        }
+      }
+
+      let highlightColor: string | null | undefined = undefined;
+      if (Object.prototype.hasOwnProperty.call(body, 'color')) {
+        const trimmed = colorRaw.trim();
+        highlightColor = trimmed ? trimmed.slice(0, 32) : null;
+      }
+
+      const commentTextRaw =
+        typeof body.text === 'string' ? body.text : '';
+      let commentText: string | null | undefined = undefined;
+      if (Object.prototype.hasOwnProperty.call(body, 'text')) {
+        const trimmed = commentTextRaw.trim();
+        if (!trimmed) {
+          res.status(400).json({ error: 'Comment text cannot be empty.' });
+          return;
+        }
+        commentText = trimmed;
+      }
+
+      const userFromReq = (req as any).user as
+        | { id?: number; role?: string }
+        | undefined;
+      if (!userFromReq || typeof userFromReq.id !== 'number') {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const db = await getDb();
+
+      const [docRows] = (await db.query(
+        `
+          SELECT id
+          FROM documents
+          WHERE vector_store_file_id = ?
+          LIMIT 1
+        `,
+        [vectorStoreFileId],
+      )) as any[];
+
+      if (!Array.isArray(docRows) || docRows.length === 0) {
+        res.status(404).json({ error: 'Document not found.' });
+        return;
+      }
+
+      const documentId = (docRows[0] as any).id as number;
+
+      const [commentRows] = (await db.query(
+        `
+          SELECT id, user_id
+          FROM document_comments
+          WHERE id = ? AND document_id = ?
+          LIMIT 1
+        `,
+        [commentId, documentId],
+      )) as any[];
+
+      if (!Array.isArray(commentRows) || commentRows.length === 0) {
+        res.status(404).json({ error: 'Comment not found.' });
+        return;
+      }
+
+      const commentRow = commentRows[0] as any;
+      const commentUserId = commentRow.user_id as number | null | undefined;
+      const isAdmin = userFromReq.role === 'admin';
+
+      if (
+        commentUserId != null &&
+        typeof commentUserId === 'number' &&
+        !isAdmin &&
+        commentUserId !== userFromReq.id
+      ) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+
+      const updates: string[] = [];
+      const params: any[] = [];
+
+      if (commentText !== undefined) {
+        updates.push('comment_text = ?');
+        params.push(commentText);
+      }
+      if (rectsProvided) {
+        updates.push('rects_json = ?');
+        params.push(rectsJson);
+      }
+      if (category !== undefined) {
+        updates.push('category = ?');
+        params.push(category);
+      }
+      if (severity !== undefined) {
+        updates.push('severity = ?');
+        params.push(severity);
+      }
+      if (status !== undefined) {
+        updates.push('status = ?');
+        params.push(status);
+      }
+      if (highlightColor !== undefined) {
+        updates.push('highlight_color = ?');
+        params.push(highlightColor);
+      }
+
+      if (updates.length === 0) {
+        res.status(400).json({ error: 'No valid fields to update.' });
+        return;
+      }
+
+      params.push(commentId, documentId);
+
+      await db.query(
+        `
+          UPDATE document_comments
+          SET ${updates.join(', ')}
+          WHERE id = ? AND document_id = ?
+        `,
+        params,
+      );
+
+      res.status(204).send();
+    } catch (error) {
+      console.error(
+        'Error in PATCH /api/documents/:id/comments/:commentId:',
+        error,
+      );
+      res.status(500).json({ error: 'Failed to update document comment.' });
+    }
+  },
+);
+
 // GET /api/documents/:id/view
 // Redirect to a short-lived pre-signed S3 URL for the underlying PDF,
 // where :id is the documents.vector_store_file_id.
