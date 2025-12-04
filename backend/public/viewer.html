@@ -251,7 +251,7 @@
       }
       .pdf-highlight-box {
         position: absolute;
-        background: rgba(234, 179, 8, 0.35);
+        background: rgba(250, 204, 21, 0.35);
         border-radius: 2px;
       }
       .pdf-text-layer {
@@ -464,7 +464,8 @@
           highlightLayerEl.style.height = `${height}px`;
 
           filtered.forEach((c) => {
-            (c.rects || []).forEach((rect) => {
+            const rects = Array.isArray(c.rects) ? c.rects : [];
+            rects.forEach((rect) => {
               if (
                 !rect ||
                 typeof rect.x !== 'number' ||
@@ -481,7 +482,6 @@
               box.style.top = `${rect.y * height}px`;
               box.style.width = `${rect.width * width}px`;
               box.style.height = `${rect.height * height}px`;
-
               highlightLayerEl.appendChild(box);
             });
           });
