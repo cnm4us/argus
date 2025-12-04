@@ -74,8 +74,8 @@
         justify-content: center;
       }
       .viewer-comments {
-        flex: 0 0 260px;
-        max-width: 320px;
+        flex: 0 0 390px;
+        max-width: 480px;
         margin-left: 0.75rem;
         background: #f9fafb;
         border-radius: 4px;
@@ -104,6 +104,11 @@
         display: flex;
         flex-direction: column;
         gap: 0.25rem;
+        background: #111827;
+        color: #f9fafb;
+        border-radius: 4px;
+        padding-left: 0.4rem;
+        padding-right: 0.4rem;
       }
       .comments-input textarea {
         width: 100%;
@@ -111,9 +116,11 @@
         resize: vertical;
         padding: 0.3rem 0.4rem;
         border-radius: 4px;
-        border: 1px solid #d1d5db;
+        border: 1px solid #374151;
         font: inherit;
         box-sizing: border-box;
+        background: #111827;
+        color: #f9fafb;
       }
       .comments-input-footer {
         display: flex;
@@ -136,7 +143,7 @@
         cursor: default;
       }
       .comments-input-error {
-        color: #b91c1c;
+        color: #fecaca;
         font-size: 0.75rem;
       }
       .comment-empty {
@@ -149,6 +156,7 @@
         border-bottom: 1px solid #e5e7eb;
         position: relative;
         padding-right: 1.2rem;
+        padding-left: 0.5rem;
       }
       .comment-item:last-child {
         border-bottom: none;
@@ -159,6 +167,15 @@
         border-radius: 4px;
         border-bottom-color: #4f46e5;
       }
+      .comment-color-bar {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 5px;
+        border-radius: 3px;
+        background: transparent;
+      }
       .comment-meta {
         font-size: 0.75rem;
         color: #6b7280;
@@ -168,9 +185,9 @@
         margin-top: 0.25rem;
         padding: 0.25rem 0.35rem;
         border-radius: 4px;
-        background: #f3f4f6;
+        background: #1f2937;
         font-size: 0.75rem;
-        color: #374151;
+        color: #e5e7eb;
         max-height: 3.5rem;
         overflow: hidden;
       }
@@ -180,7 +197,7 @@
       }
       .comments-selection-text {
         font-style: italic;
-        color: #4b5563;
+        color: #e5e7eb;
       }
       .comments-metadata-row {
         margin-top: 0.3rem;
@@ -193,13 +210,17 @@
         display: flex;
         flex-direction: column;
         gap: 0.1rem;
+        color: #f9fafb;
+        font-weight: 600;
       }
       .comments-metadata-row select {
         min-width: 100px;
         padding: 0.15rem 0.3rem;
         border-radius: 4px;
-        border: 1px solid #d1d5db;
+        border: 1px solid #374151;
         font: inherit;
+        background: #111827;
+        color: #f9fafb;
       }
       .comment-highlight-preview {
         margin-top: 0.1rem;
@@ -211,6 +232,17 @@
         margin-top: 0.15rem;
         font-size: 0.75rem;
         color: #4b5563;
+      }
+      .comment-severity-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.05rem 0.35rem;
+        border-radius: 999px;
+        font-size: 0.7rem;
+        background: #111827;
+        color: #ffffff;
+        margin-bottom: 0.15rem;
       }
       .comment-delete {
         position: absolute;
@@ -257,7 +289,7 @@
       .comments-page-note-hint {
         margin-top: 0.25rem;
         font-size: 0.75rem;
-        color: #6b7280;
+        color: #d1d5db;
       }
       .viewer-doc {
         flex: 1 1 auto;
@@ -288,6 +320,16 @@
         position: absolute;
         background: transparent;
         border-radius: 2px;
+      }
+      .pdf-severity-badge {
+        position: absolute;
+        font-size: 0.7rem;
+        padding: 0.05rem 0.3rem;
+        border-radius: 999px;
+        background: #111827;
+        color: #ffffff;
+        pointer-events: none;
+        white-space: nowrap;
       }
       .pdf-text-layer {
         position: absolute;
@@ -607,6 +649,9 @@
             } else {
               eraserSwatchEl.classList.remove('active');
             }
+          }
+          if (typeof currentPage === 'number' && currentPage >= 1) {
+            renderHighlightsForPage(currentPage);
           }
         }
 
@@ -964,6 +1009,71 @@
               }
               highlightLayerEl.appendChild(box);
             });
+
+            // Add a small severity/footnote badge near the first highlight
+            // rect, slightly above and to the right of the highlighted text.
+            if (
+              c.severity &&
+              Array.isArray(c.rects) &&
+              c.rects.length > 0 &&
+              Array.isArray(allComments) &&
+              allComments.length > 0
+            ) {
+              const severityValue = String(c.severity).toLowerCase();
+              let severitySymbol = '';
+              if (severityValue === 'low') {
+                severitySymbol = '●';
+              } else if (severityValue === 'medium') {
+                severitySymbol = '■';
+              } else if (severityValue === 'high') {
+                severitySymbol = '▲';
+              }
+
+              if (severitySymbol) {
+                let footnoteNumber = null;
+                const idx = allComments.findIndex(
+                  (existing) =>
+                    typeof existing.id === 'number' &&
+                    typeof c.id === 'number' &&
+                    existing.id === c.id,
+                );
+                if (idx >= 0) {
+                  footnoteNumber = idx + 1;
+                }
+
+                const anchorRect = c.rects[0];
+                if (
+                  anchorRect &&
+                  typeof anchorRect.x === 'number' &&
+                  typeof anchorRect.y === 'number' &&
+                  typeof anchorRect.width === 'number'
+                ) {
+                  const badge = document.createElement('div');
+                  badge.className = 'pdf-severity-badge';
+                  const labelParts = [];
+                  if (footnoteNumber !== null) {
+                    labelParts.push(String(footnoteNumber));
+                  }
+                  labelParts.push(severitySymbol);
+                  badge.textContent = labelParts.join(' ');
+
+                  const baseLeft = (anchorRect.x + anchorRect.width) * width;
+                  const baseTop = anchorRect.y * height;
+                  const offsetX = 4;
+                  const offsetY = 10;
+                  let left = baseLeft + offsetX;
+                  let top = baseTop - offsetY;
+                  if (top < 0) top = 0;
+                  if (left > width - 40) {
+                    left = width - 40;
+                  }
+                  badge.style.left = `${left}px`;
+                  badge.style.top = `${top}px`;
+
+                  highlightLayerEl.appendChild(badge);
+                }
+              }
+            }
           });
 
           // Render live preview for the current selection, if it is on this page.
@@ -1250,6 +1360,47 @@
             item.className = 'comment-item';
             if (typeof c.id === 'number' || typeof c.id === 'string') {
               item.dataset.commentId = String(c.id);
+            }
+
+            const colorBar = document.createElement('div');
+            colorBar.className = 'comment-color-bar';
+            if (c.color) {
+              colorBar.style.background = getEffectiveHighlightColor(c.color);
+            }
+            item.appendChild(colorBar);
+
+            // Derive a footnote-style index for this comment based on its
+            // position in the full document comment list.
+            let footnoteNumber = null;
+            if (Array.isArray(allComments) && allComments.length > 0) {
+              const idx = allComments.findIndex(
+                (existing) =>
+                  typeof existing.id === 'number' &&
+                  typeof c.id === 'number' &&
+                  existing.id === c.id,
+              );
+              if (idx >= 0) {
+                footnoteNumber = idx + 1;
+              }
+            }
+
+            // Severity + footnote badge at the top of the comment.
+            if (c.severity && footnoteNumber !== null) {
+              let severitySymbol = '';
+              const severityValue = String(c.severity).toLowerCase();
+              if (severityValue === 'low') {
+                severitySymbol = '●';
+              } else if (severityValue === 'medium') {
+                severitySymbol = '■';
+              } else if (severityValue === 'high') {
+                severitySymbol = '▲';
+              }
+              if (severitySymbol) {
+                const badge = document.createElement('div');
+                badge.className = 'comment-severity-badge';
+                badge.textContent = `${footnoteNumber} ${severitySymbol}`;
+                item.appendChild(badge);
+              }
             }
 
             const meta = document.createElement('div');
