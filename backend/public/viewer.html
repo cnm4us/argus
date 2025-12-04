@@ -368,6 +368,16 @@
               title="Highlighter 3"
             ></div>
             <div
+              id="comment-color-4"
+              class="comments-color-swatch"
+              title="Highlighter 4"
+            ></div>
+            <div
+              id="comment-color-5"
+              class="comments-color-swatch"
+              title="Highlighter 5"
+            ></div>
+            <div
               id="comment-eraser"
               class="comments-color-swatch comments-eraser-swatch"
               title="Clear color"
@@ -472,6 +482,8 @@
           document.getElementById('comment-color-1'),
           document.getElementById('comment-color-2'),
           document.getElementById('comment-color-3'),
+          document.getElementById('comment-color-4'),
+          document.getElementById('comment-color-5'),
         ];
         const eraserSwatchEl = document.getElementById('comment-eraser');
 
@@ -530,6 +542,52 @@
           return rgba || 'rgba(250, 204, 21, 0.35)';
         }
 
+        function getColorIndexForCategory(categoryValue) {
+          const value =
+            typeof categoryValue === 'string'
+              ? categoryValue.trim().toLowerCase()
+              : '';
+          if (!value) return -1;
+          switch (value) {
+            case 'clinical risk':
+              return 0;
+            case 'documentation':
+              return 1;
+            case 'legal note':
+              return 2;
+            case 'other':
+              return 3;
+            default:
+              return -1;
+          }
+        }
+
+        function applyCategoryColor(categoryValue) {
+          const index = getColorIndexForCategory(categoryValue);
+          if (index >= 0 && index < highlightColors.length) {
+            setActiveHighlightIndex(index);
+            updateHighlightPointerEvents();
+
+            // If a comment is active, immediately recolor its highlights in
+            // the viewer so the user sees the new category color right away.
+            if (
+              activeCommentId !== null &&
+              Array.isArray(allComments) &&
+              allComments.length > 0
+            ) {
+              const active = allComments.find(
+                (c) =>
+                  typeof c.id === 'number' &&
+                  c.id === activeCommentId,
+              );
+              if (active) {
+                active.color = highlightColors[index];
+                renderHighlightsForPage(currentPage);
+              }
+            }
+          }
+        }
+
         function setActiveHighlightIndex(index) {
           activeHighlightColor =
             index >= 0 && index < highlightColors.length
@@ -553,15 +611,21 @@
         }
 
         function updateHighlightPointerEvents() {
-          if (!highlightLayerEl || !textLayerEl) return;
+          if (!highlightLayerEl || !textLayerEl || !canvasEl) return;
           if (activeHighlightColor === null) {
-            // Eraser mode: allow clicking highlights, disable text selection.
+            // Eraser mode: allow clicking highlights, disable text selection,
+            // and show an eraser-like cursor over the page.
             highlightLayerEl.style.pointerEvents = 'auto';
             textLayerEl.style.pointerEvents = 'none';
+            highlightLayerEl.style.cursor = 'crosshair';
+            canvasEl.style.cursor = 'crosshair';
           } else {
-            // Highlight mode: enable text selection, ignore highlight clicks.
+            // Highlight mode: enable text selection, ignore highlight clicks,
+            // and restore the default cursor.
             highlightLayerEl.style.pointerEvents = 'none';
             textLayerEl.style.pointerEvents = 'auto';
+            highlightLayerEl.style.cursor = '';
+            canvasEl.style.cursor = '';
           }
         }
 
@@ -580,6 +644,18 @@
         if (colorSwatchEls[2]) {
           colorSwatchEls[2].addEventListener('click', () => {
             setActiveHighlightIndex(2);
+            updateHighlightPointerEvents();
+          });
+        }
+        if (colorSwatchEls[3]) {
+          colorSwatchEls[3].addEventListener('click', () => {
+            setActiveHighlightIndex(3);
+            updateHighlightPointerEvents();
+          });
+        }
+        if (colorSwatchEls[4]) {
+          colorSwatchEls[4].addEventListener('click', () => {
+            setActiveHighlightIndex(4);
             updateHighlightPointerEvents();
           });
         }
@@ -1659,6 +1735,15 @@
               ) {
                 renderHighlightsForPage(currentPage);
               }
+            });
+          }
+
+          if (commentCategorySelect) {
+            commentCategorySelect.addEventListener('change', () => {
+              const categoryVal = String(
+                (commentCategorySelect).value || '',
+              ).trim();
+              applyCategoryColor(categoryVal);
             });
           }
 

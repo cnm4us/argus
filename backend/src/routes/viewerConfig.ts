@@ -10,6 +10,8 @@ router.get('/highlights', requireAuth, (_req: Request, res: Response) => {
     config.highlightColor1,
     config.highlightColor2,
     config.highlightColor3,
+    config.highlightColor4,
+    config.highlightColor5,
   ].filter((c) => typeof c === 'string' && c.trim().length > 0);
 
   res.json({
@@ -19,4 +21,3 @@ router.get('/highlights', requireAuth, (_req: Request, res: Response) => {
 });
 
 export default router;
-

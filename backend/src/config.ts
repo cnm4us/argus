@@ -24,6 +24,8 @@ export interface AppConfig {
   highlightColor1: string;
   highlightColor2: string;
   highlightColor3: string;
+   highlightColor4: string;
+   highlightColor5: string;
   highlightOpacity: number;
 }
 
@@ -67,6 +69,8 @@ const dbName = process.env.DB_NAME || '';
 const highlightColor1 = process.env.HIGHLIGHT_COLOR_1 || '#FACC15';
 const highlightColor2 = process.env.HIGHLIGHT_COLOR_2 || '#22C55E';
 const highlightColor3 = process.env.HIGHLIGHT_COLOR_3 || '#F97316';
+const highlightColor4 = process.env.HIGHLIGHT_COLOR_4 || '#FF0000';
+const highlightColor5 = process.env.HIGHLIGHT_COLOR_5 || '#000000';
 
 let highlightOpacity = Number(process.env.HIGHLIGHT_OPACITY || '0.35');
 if (!Number.isFinite(highlightOpacity) || highlightOpacity <= 0) {
@@ -114,5 +118,7 @@ export const config: AppConfig = {
   highlightColor1,
   highlightColor2,
   highlightColor3,
+  highlightColor4,
+  highlightColor5,
   highlightOpacity,
 };
