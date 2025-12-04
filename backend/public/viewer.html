@@ -588,17 +588,73 @@
 
           const containerRect = textLayerEl.getBoundingClientRect();
           const rects = [];
-          const clientRects = range.getClientRects();
-          for (const r of clientRects) {
+          const clientRects = Array.from(range.getClientRects());
+
+          // Merge overlapping selection rects on each line so we don't double
+          // paint the same area (which would make highlights look darker),
+          // while still preserving partial-line selections.
+          const lineGroups = new Map();
+          clientRects.forEach((r) => {
+            const midY = (r.top + r.bottom) / 2;
+            const key = String(Math.round(midY / 4)); // ~4px vertical buckets
+            const existing = lineGroups.get(key);
+            if (existing) {
+              existing.push(r);
+            } else {
+              lineGroups.set(key, [r]);
+            }
+          });
+
+          const mergedRects = [];
+          lineGroups.forEach((group) => {
+            if (!Array.isArray(group) || group.length === 0) return;
+            const sorted = group.slice().sort((a, b) => a.left - b.left);
+
+            const epsilonPx = 1; // small tolerance for overlap / adjacency
+            let current = {
+              left: sorted[0].left,
+              right: sorted[0].right,
+              top: sorted[0].top,
+              bottom: sorted[0].bottom,
+            };
+
+            for (let i = 1; i < sorted.length; i++) {
+              const r = sorted[i];
+              if (r.left <= current.right + epsilonPx) {
+                // Overlapping or touching horizontally on this line; merge.
+                if (r.left < current.left) current.left = r.left;
+                if (r.top < current.top) current.top = r.top;
+                if (r.right > current.right) current.right = r.right;
+                if (r.bottom > current.bottom) current.bottom = r.bottom;
+              } else {
+                mergedRects.push({ ...current });
+                current = {
+                  left: r.left,
+                  right: r.right,
+                  top: r.top,
+                  bottom: r.bottom,
+                };
+              }
+            }
+            mergedRects.push({ ...current });
+          });
+
+          const finalRects = mergedRects.length > 0 ? mergedRects : clientRects;
+
+          finalRects.forEach((r) => {
             const relativeLeft = r.left - containerRect.left;
             const relativeTop = r.top - containerRect.top;
             rects.push({
               x: containerRect.width ? relativeLeft / containerRect.width : 0,
               y: containerRect.height ? relativeTop / containerRect.height : 0,
-              width: containerRect.width ? r.width / containerRect.width : 0,
-              height: containerRect.height ? r.height / containerRect.height : 0,
+              width: containerRect.width
+                ? (r.right - r.left) / containerRect.width
+                : 0,
+              height: containerRect.height
+                ? (r.bottom - r.top) / containerRect.height
+                : 0,
             });
-          }
+          });
 
           if (!rects.length) {
             clearSelectionState();
