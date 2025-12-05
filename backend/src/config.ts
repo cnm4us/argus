@@ -27,6 +27,7 @@ export interface AppConfig {
   highlightColor4: string;
   highlightColor5: string;
   highlightOpacity: number;
+  commentMarkerOpacity: number;
   statusOpenColor: string;
   statusResolvedColor: string;
   commentSelectedColor: string;
@@ -88,6 +89,16 @@ if (highlightOpacity > 1) {
   highlightOpacity = 1;
 }
 
+let commentMarkerOpacity = Number(
+  process.env.COMMENT_MARKER_OPACITY || '0.9',
+);
+if (!Number.isFinite(commentMarkerOpacity) || commentMarkerOpacity <= 0) {
+  commentMarkerOpacity = 0.9;
+}
+if (commentMarkerOpacity > 1) {
+  commentMarkerOpacity = 1;
+}
+
 if (!appPassword) {
   console.warn('APP_PASSWORD is not set. Protected routes will reject requests.');
 }
@@ -129,6 +140,7 @@ export const config: AppConfig = {
   highlightColor4,
   highlightColor5,
   highlightOpacity,
+  commentMarkerOpacity,
   statusOpenColor,
   statusResolvedColor,
   commentSelectedColor,

@@ -234,6 +234,19 @@
         color: #f9fafb;
         font-weight: 600;
       }
+      .comments-category-header {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+      }
+      .comment-category-swatch {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        border: 1px solid #4b5563;
+        background: transparent;
+        box-sizing: border-box;
+      }
       .comments-metadata-row select {
         min-width: 100px;
         padding: 0.15rem 0.3rem;
@@ -442,7 +455,13 @@
             </div>
             <div class="comments-metadata-row">
               <label for="comment-category">
-                Category
+                <span class="comments-category-header">
+                  <span
+                    id="comment-category-swatch"
+                    class="comment-category-swatch"
+                  ></span>
+                  Category
+                </span>
                 <select id="comment-category">
                   <option value="">(none)</option>
                   <option value="clinical risk">Clinical risk</option>
@@ -503,6 +522,9 @@
         const commentCategorySelect = document.getElementById(
           'comment-category',
         );
+        const commentCategorySwatch = document.getElementById(
+          'comment-category-swatch',
+        );
         const commentSeveritySelect = document.getElementById(
           'comment-severity',
         );
@@ -539,6 +561,7 @@
         let editingCommentId = null;
         let highlightColors = [];
         let highlightOpacity = 0.35;
+        let commentMarkerOpacity = 0.9;
         let activeHighlightColor = null;
         let lastHighlightColor = null;
         let statusOpenColor = 'rgba(185, 28, 28, 0.9)';
@@ -585,6 +608,15 @@
           return rgba || 'rgba(250, 204, 21, 0.35)';
         }
 
+        function getEffectiveMarkerColor(color) {
+          const base =
+            typeof color === 'string' && color.trim()
+              ? color.trim()
+              : highlightColors[0] || '#FACC15';
+          const rgba = hexToRgba(base, commentMarkerOpacity);
+          return rgba || 'rgba(250, 204, 21, 0.9)';
+        }
+
         function getColorIndexForCategory(categoryValue) {
           const value =
             typeof categoryValue === 'string'
@@ -602,6 +634,22 @@
               return 3;
             default:
               return -1;
+          }
+        }
+
+        function updateCategorySwatch(categoryValue) {
+          if (!commentCategorySwatch) return;
+          const index = getColorIndexForCategory(categoryValue);
+          if (
+            index >= 0 &&
+            index < highlightColors.length &&
+            highlightColors[index]
+          ) {
+            commentCategorySwatch.style.background = highlightColors[index];
+            commentCategorySwatch.style.opacity = '1';
+          } else {
+            commentCategorySwatch.style.background = 'transparent';
+            commentCategorySwatch.style.opacity = '0.3';
           }
         }
 
@@ -629,6 +677,7 @@
               }
             }
           }
+          updateCategorySwatch(categoryValue);
         }
 
         function updateCommentFormBorder() {
@@ -1052,6 +1101,13 @@
                   updateHighlightPointerEvents();
                 }
               }
+
+              if (commentCategorySelect) {
+                const categoryVal = String(
+                  (commentCategorySelect).value || '',
+                ).trim();
+                updateCategorySwatch(categoryVal);
+              }
             }
           } else {
             if (commentTextInput) {
@@ -1069,6 +1125,13 @@
             if (commentSubmitBtn) {
               commentSubmitBtn.textContent = 'Add comment';
             }
+          }
+
+          if (commentCategorySelect) {
+            const categoryVal = String(
+              (commentCategorySelect).value || '',
+            ).trim();
+            updateCategorySwatch(categoryVal);
           }
 
           updateCommentSubmitState();
@@ -1504,7 +1567,7 @@
             const colorBar = document.createElement('div');
             colorBar.className = 'comment-color-bar';
             if (c.color) {
-              colorBar.style.background = getEffectiveHighlightColor(c.color);
+              colorBar.style.background = getEffectiveMarkerColor(c.color);
             }
             item.appendChild(colorBar);
 
@@ -1921,13 +1984,20 @@
                     (c) => typeof c === 'string' && c.trim().length > 0,
                   );
                 }
-                if (
-                  paletteJson &&
-                  typeof paletteJson.opacity === 'number' &&
-                  Number.isFinite(paletteJson.opacity)
-                ) {
-                  highlightOpacity = paletteJson.opacity;
-                }
+	                if (
+	                  paletteJson &&
+	                  typeof paletteJson.opacity === 'number' &&
+	                  Number.isFinite(paletteJson.opacity)
+	                ) {
+	                  highlightOpacity = paletteJson.opacity;
+	                }
+	                if (
+	                  paletteJson &&
+	                  typeof paletteJson.commentMarkerOpacity === 'number' &&
+	                  Number.isFinite(paletteJson.commentMarkerOpacity)
+	                ) {
+	                  commentMarkerOpacity = paletteJson.commentMarkerOpacity;
+	                }
                 if (
                   paletteJson &&
                   typeof paletteJson.statusOpenColor === 'string' &&
@@ -1970,6 +2040,13 @@
           });
 
           setActiveHighlightIndex(0);
+
+          if (commentCategorySelect) {
+            const initialCategory = String(
+              (commentCategorySelect).value || '',
+            ).trim();
+            updateCategorySwatch(initialCategory);
+          }
 
             const pdfjsLib = window['pdfjsLib'];
             const loadingTask = pdfjsLib.getDocument({ url });
