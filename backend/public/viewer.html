@@ -278,6 +278,19 @@
         color: #ffffff;
         margin-bottom: 0;
       }
+      .comment-severity-number {
+        font-size: 0.7rem;
+      }
+      .comment-severity-symbol {
+        font-size: 0.7rem;
+        line-height: 1;
+      }
+      .comment-severity-symbol-low {
+        font-size: 1.2rem;
+        line-height: 1;
+        position: relative;
+        top: -0.09em;
+      }
       .comment-erase-toggle {
         padding: 0.1rem 0.6rem;
         border-radius: 999px;
@@ -344,6 +357,9 @@
       }
       .pdf-severity-badge {
         position: absolute;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
         font-size: 0.7rem;
         padding: 0.05rem 0.3rem;
         border-radius: 999px;
@@ -351,6 +367,19 @@
         color: #ffffff;
         pointer-events: none;
         white-space: nowrap;
+      }
+      .pdf-severity-number {
+        font-size: 0.7rem;
+      }
+      .pdf-severity-symbol {
+        font-size: 0.7rem;
+        line-height: 1;
+      }
+      .pdf-severity-symbol-low {
+        font-size: 1.2rem;
+        line-height: 1;
+        position: relative;
+        top: -0.09em;
       }
       .pdf-text-layer {
         position: absolute;
@@ -744,7 +773,17 @@
             if (severitySymbol) {
               const badge = document.createElement('div');
               badge.className = 'comment-severity-badge';
-              badge.textContent = `${footnoteNumber} ${severitySymbol}`;
+              const numberSpan = document.createElement('span');
+              numberSpan.className = 'comment-severity-number';
+              numberSpan.textContent = String(footnoteNumber);
+              const symbolSpan = document.createElement('span');
+              symbolSpan.className = 'comment-severity-symbol';
+              if (severityValue === 'low') {
+                symbolSpan.classList.add('comment-severity-symbol-low');
+              }
+              symbolSpan.textContent = severitySymbol;
+              badge.appendChild(numberSpan);
+              badge.appendChild(symbolSpan);
               commentActiveSummaryEl.appendChild(badge);
             }
           }
@@ -1252,12 +1291,19 @@
                 ) {
                   const badge = document.createElement('div');
                   badge.className = 'pdf-severity-badge';
-                  const labelParts = [];
+                  const numberSpan = document.createElement('span');
+                  numberSpan.className = 'pdf-severity-number';
                   if (footnoteNumber !== null) {
-                    labelParts.push(String(footnoteNumber));
+                    numberSpan.textContent = String(footnoteNumber);
                   }
-                  labelParts.push(severitySymbol);
-                  badge.textContent = labelParts.join(' ');
+                  const symbolSpan = document.createElement('span');
+                  symbolSpan.className = 'pdf-severity-symbol';
+                  if (severityValue === 'low') {
+                    symbolSpan.classList.add('pdf-severity-symbol-low');
+                  }
+                  symbolSpan.textContent = severitySymbol;
+                  badge.appendChild(numberSpan);
+                  badge.appendChild(symbolSpan);
 
                   const baseLeft = (anchorRect.x + anchorRect.width) * width;
                   const baseTop = anchorRect.y * height;
@@ -1603,7 +1649,17 @@
               if (severitySymbol) {
                 const badge = document.createElement('div');
                 badge.className = 'comment-severity-badge';
-                badge.textContent = `${footnoteNumber} ${severitySymbol}`;
+                const numberSpan = document.createElement('span');
+                numberSpan.className = 'comment-severity-number';
+                numberSpan.textContent = String(footnoteNumber);
+                const symbolSpan = document.createElement('span');
+                symbolSpan.className = 'comment-severity-symbol';
+                if (severityValue === 'low') {
+                  symbolSpan.classList.add('comment-severity-symbol-low');
+                }
+                symbolSpan.textContent = severitySymbol;
+                badge.appendChild(numberSpan);
+                badge.appendChild(symbolSpan);
                 meta.appendChild(badge);
               }
             }
