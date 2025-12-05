@@ -24,9 +24,12 @@ export interface AppConfig {
   highlightColor1: string;
   highlightColor2: string;
   highlightColor3: string;
-   highlightColor4: string;
-   highlightColor5: string;
+  highlightColor4: string;
+  highlightColor5: string;
   highlightOpacity: number;
+  statusOpenColor: string;
+  statusResolvedColor: string;
+  commentSelectedColor: string;
 }
 
 const port = Number(process.env.PORT) || 4000;
@@ -71,6 +74,11 @@ const highlightColor2 = process.env.HIGHLIGHT_COLOR_2 || '#22C55E';
 const highlightColor3 = process.env.HIGHLIGHT_COLOR_3 || '#F97316';
 const highlightColor4 = process.env.HIGHLIGHT_COLOR_4 || '#FF0000';
 const highlightColor5 = process.env.HIGHLIGHT_COLOR_5 || '#000000';
+
+const statusOpenColor = process.env.STATUS_OPEN_COLOR || '#B91C1C';
+const statusResolvedColor = process.env.STATUS_RESOLVED_COLOR || '#111827';
+const commentSelectedColor =
+  process.env.COMMENT_SELECTED_COLOR || '#22C55E';
 
 let highlightOpacity = Number(process.env.HIGHLIGHT_OPACITY || '0.35');
 if (!Number.isFinite(highlightOpacity) || highlightOpacity <= 0) {
@@ -121,4 +129,7 @@ export const config: AppConfig = {
   highlightColor4,
   highlightColor5,
   highlightOpacity,
+  statusOpenColor,
+  statusResolvedColor,
+  commentSelectedColor,
 };

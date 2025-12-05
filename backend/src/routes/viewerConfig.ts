@@ -17,6 +17,9 @@ router.get('/highlights', requireAuth, (_req: Request, res: Response) => {
   res.json({
     colors,
     opacity: config.highlightOpacity,
+    statusOpenColor: config.statusOpenColor,
+    statusResolvedColor: config.statusResolvedColor,
+    commentSelectedColor: config.commentSelectedColor,
   });
 });
 

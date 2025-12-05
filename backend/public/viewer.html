@@ -99,7 +99,7 @@
       }
       .comments-input {
         margin-top: 0.35rem;
-        border-top: 1px solid #e5e7eb;
+        border-top: 5px solid #111827;
         padding-top: 0.35rem;
         display: flex;
         flex-direction: column;
@@ -109,6 +109,24 @@
         border-radius: 4px;
         padding-left: 0.4rem;
         padding-right: 0.4rem;
+      }
+      .comment-active-header {
+        display: none;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.4rem;
+        margin: -0.35rem -0.4rem 0.35rem;
+        padding: 0.25rem 0.4rem;
+        font-size: 0.75rem;
+        font-weight: 500;
+        background: #111827;
+        color: #111827;
+        box-sizing: border-box;
+      }
+      .comment-active-summary {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
       }
       .comments-input textarea {
         width: 100%;
@@ -177,6 +195,9 @@
         background: transparent;
       }
       .comment-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
         font-size: 0.75rem;
         color: #6b7280;
         margin-bottom: 0.15rem;
@@ -242,7 +263,24 @@
         font-size: 0.7rem;
         background: #111827;
         color: #ffffff;
-        margin-bottom: 0.15rem;
+        margin-bottom: 0;
+      }
+      .comment-erase-toggle {
+        padding: 0.1rem 0.6rem;
+        border-radius: 999px;
+        border: 1px solid #111827;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        background: #111827;
+        color: #f9fafb;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .comment-erase-toggle.active {
+        background: #b91c1c;
+        border-color: #b91c1c;
+        color: #111827;
       }
       .comment-delete {
         position: absolute;
@@ -255,36 +293,6 @@
         background: #b91c1c;
         padding: 0 4px;
         border-radius: 4px;
-      }
-      .comments-toolbar {
-        display: flex;
-        gap: 0.25rem;
-        align-items: center;
-        margin-bottom: 0.35rem;
-        font-size: 0.75rem;
-        color: #374151;
-      }
-      .comments-toolbar-label {
-        margin-right: 0.25rem;
-      }
-      .comments-color-swatch {
-        width: 16px;
-        height: 16px;
-        border-radius: 4px;
-        border: 1px solid #d1d5db;
-        cursor: pointer;
-        box-sizing: border-box;
-      }
-      .comments-color-swatch.active {
-        outline: 2px solid #2563eb;
-        outline-offset: 1px;
-      }
-      .comments-eraser-swatch {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 0.7rem;
-        background: #ffffff;
       }
       .comments-page-note-hint {
         margin-top: 0.25rem;
@@ -392,44 +400,25 @@
           </div>
         </div>
         <aside class="viewer-comments">
-          <div class="comments-toolbar">
-            <span class="comments-toolbar-label">Highlighter:</span>
-            <div
-              id="comment-color-1"
-              class="comments-color-swatch"
-              title="Highlighter 1"
-            ></div>
-            <div
-              id="comment-color-2"
-              class="comments-color-swatch"
-              title="Highlighter 2"
-            ></div>
-            <div
-              id="comment-color-3"
-              class="comments-color-swatch"
-              title="Highlighter 3"
-            ></div>
-            <div
-              id="comment-color-4"
-              class="comments-color-swatch"
-              title="Highlighter 4"
-            ></div>
-            <div
-              id="comment-color-5"
-              class="comments-color-swatch"
-              title="Highlighter 5"
-            ></div>
-            <div
-              id="comment-eraser"
-              class="comments-color-swatch comments-eraser-swatch"
-              title="Clear color"
-            >
-              ×
-            </div>
-          </div>
           <div class="comments-header">Comments</div>
           <div id="comments-body" class="comments-body"></div>
           <div class="comments-input">
+            <div
+              id="comment-active-header"
+              class="comment-active-header"
+            >
+              <div
+                id="comment-active-summary"
+                class="comment-active-summary"
+              ></div>
+              <button
+                id="comment-eraser"
+                type="button"
+                class="comment-erase-toggle"
+              >
+                erase
+              </button>
+            </div>
             <textarea
               id="comment-text"
               placeholder="Add a comment for this page..."
@@ -520,6 +509,13 @@
         const commentStatusSelect = document.getElementById('comment-status');
         const textLayerEl = document.getElementById('pdf-text-layer');
         const highlightLayerEl = document.getElementById('pdf-highlight-layer');
+        const commentFormEl = document.querySelector('.comments-input');
+        const commentActiveHeaderEl = document.getElementById(
+          'comment-active-header',
+        );
+        const commentActiveSummaryEl = document.getElementById(
+          'comment-active-summary',
+        );
         const colorSwatchEls = [
           document.getElementById('comment-color-1'),
           document.getElementById('comment-color-2'),
@@ -544,6 +540,11 @@
         let highlightColors = [];
         let highlightOpacity = 0.35;
         let activeHighlightColor = null;
+        let lastHighlightColor = null;
+        let statusOpenColor = 'rgba(185, 28, 28, 0.9)';
+        let statusResolvedColor = 'rgba(31, 41, 55, 0.9)';
+        let commentSelectedColor = '#22C55E';
+        const commentBorderDefaultColor = '#111827';
 
         function hexToRgba(hex, alpha) {
           if (typeof hex !== 'string') return null;
@@ -630,11 +631,96 @@
           }
         }
 
+        function updateCommentFormBorder() {
+          if (!commentFormEl) return;
+          const color =
+            activeCommentId !== null && commentSelectedColor
+              ? commentSelectedColor
+              : commentBorderDefaultColor;
+          commentFormEl.style.borderTopColor = color;
+        }
+
+        function updateCommentFormSummary() {
+          if (!commentActiveSummaryEl) return;
+          if (!commentActiveHeaderEl) return;
+          if (
+            activeCommentId === null ||
+            !Array.isArray(allComments) ||
+            allComments.length === 0
+          ) {
+            commentActiveHeaderEl.style.display = 'none';
+            commentActiveSummaryEl.innerHTML = '';
+            return;
+          }
+
+          const active = allComments.find(
+            (c) =>
+              typeof c.id === 'number' &&
+              c.id === activeCommentId,
+          );
+          if (!active) {
+            commentActiveHeaderEl.style.display = 'none';
+            commentActiveSummaryEl.innerHTML = '';
+            return;
+          }
+
+          commentActiveSummaryEl.innerHTML = '';
+          commentActiveHeaderEl.style.display = 'flex';
+          commentActiveHeaderEl.style.background = commentSelectedColor;
+          commentActiveHeaderEl.style.color = '#111827';
+
+          // Footnote index for this comment in document order.
+          let footnoteNumber = null;
+          const idx = allComments.findIndex(
+            (existing) =>
+              typeof existing.id === 'number' &&
+              typeof active.id === 'number' &&
+              existing.id === active.id,
+          );
+          if (idx >= 0) {
+            footnoteNumber = idx + 1;
+          }
+
+          // Severity pill.
+          if (active.severity && footnoteNumber !== null) {
+            let severitySymbol = '';
+            const severityValue = String(active.severity).toLowerCase();
+            if (severityValue === 'low') {
+              severitySymbol = '●';
+            } else if (severityValue === 'medium') {
+              severitySymbol = '■';
+            } else if (severityValue === 'high') {
+              severitySymbol = '▲';
+            }
+            if (severitySymbol) {
+              const badge = document.createElement('div');
+              badge.className = 'comment-severity-badge';
+              badge.textContent = `${footnoteNumber} ${severitySymbol}`;
+              commentActiveSummaryEl.appendChild(badge);
+            }
+          }
+
+          // Page and author text.
+          const metaSpan = document.createElement('span');
+          const parts = [];
+          if (typeof active.pageNumber === 'number') {
+            parts.push(`Page ${active.pageNumber}`);
+          }
+          if (active.author) {
+            parts.push(`by ${active.author}`);
+          }
+          metaSpan.textContent = parts.join(' • ');
+          commentActiveSummaryEl.appendChild(metaSpan);
+        }
+
         function setActiveHighlightIndex(index) {
-          activeHighlightColor =
-            index >= 0 && index < highlightColors.length
-              ? highlightColors[index]
-              : null;
+          const hasValidIndex =
+            index >= 0 && index < highlightColors.length;
+          const newColor = hasValidIndex ? highlightColors[index] : null;
+          activeHighlightColor = newColor;
+          if (newColor !== null) {
+            lastHighlightColor = newColor;
+          }
           colorSwatchEls.forEach((el, i) => {
             if (!el) return;
             if (i === index) {
@@ -704,10 +790,47 @@
             updateHighlightPointerEvents();
           });
         }
-        if (eraserSwatchEl) {
-          eraserSwatchEl.addEventListener('click', () => {
+        function toggleEraserMode() {
+          if (!eraserSwatchEl) return;
+          // If we are currently in eraser mode (no active highlight color),
+          // restore the last non-eraser color, or fall back to a palette
+          // color derived from the current category / palette defaults.
+          if (activeHighlightColor === null) {
+            let restored = lastHighlightColor;
+            if (!restored) {
+              if (commentCategorySelect) {
+                const categoryVal = String(
+                  (commentCategorySelect).value || '',
+                ).trim();
+                if (categoryVal) {
+                  applyCategoryColor(categoryVal);
+                  return;
+                }
+              }
+              if (highlightColors.length > 0) {
+                setActiveHighlightIndex(0);
+                updateHighlightPointerEvents();
+                return;
+              }
+              return;
+            }
+            activeHighlightColor = restored;
+            eraserSwatchEl.classList.remove('active');
+            updateHighlightPointerEvents();
+            if (typeof currentPage === 'number' && currentPage >= 1) {
+              renderHighlightsForPage(currentPage);
+            }
+          } else {
+            // Enter eraser mode: clear the active highlight color but do not
+            // forget the last color so we can restore it on the next toggle.
             setActiveHighlightIndex(-1);
             updateHighlightPointerEvents();
+          }
+        }
+
+        if (eraserSwatchEl) {
+          eraserSwatchEl.addEventListener('click', () => {
+            toggleEraserMode();
           });
         }
 
@@ -884,6 +1007,7 @@
           }
 
           renderHighlightsForPage(currentPage);
+          updateCommentFormBorder();
 
           if (editingCommentId !== null) {
             const active = allComments.find(
@@ -915,14 +1039,17 @@
                 );
                 if (idx >= 0) {
                   setActiveHighlightIndex(idx);
+                  updateHighlightPointerEvents();
                 } else {
                   activeHighlightColor = active.color;
+                  lastHighlightColor = active.color;
                   colorSwatchEls.forEach((el) => {
                     if (el) el.classList.remove('active');
                   });
                   if (eraserSwatchEl) {
                     eraserSwatchEl.classList.remove('active');
                   }
+                  updateHighlightPointerEvents();
                 }
               }
             }
@@ -945,6 +1072,7 @@
           }
 
           updateCommentSubmitState();
+          updateCommentFormSummary();
         }
 
         function renderHighlightsForPage(pageNum) {
@@ -997,7 +1125,18 @@
                 typeof c.id === 'number' &&
                 c.id === activeCommentId
               ) {
-                box.style.outline = '2px solid rgba(37, 99, 235, 0.8)';
+                const statusValue =
+                  typeof c.status === 'string'
+                    ? c.status.trim().toLowerCase()
+                    : '';
+                let outlineColor = 'rgba(37, 99, 235, 0.8)'; // fallback blue
+                if (statusValue === 'open') {
+                  outlineColor = statusOpenColor || 'rgba(185, 28, 28, 0.9)';
+                } else if (statusValue === 'resolved') {
+                  outlineColor =
+                    statusResolvedColor || 'rgba(31, 41, 55, 0.9)';
+                }
+                box.style.outline = `2px solid ${outlineColor}`;
               }
               box.style.left = `${rect.x * width}px`;
               box.style.top = `${rect.y * height}px`;
@@ -1384,7 +1523,10 @@
               }
             }
 
-            // Severity + footnote badge at the top of the comment.
+            const meta = document.createElement('div');
+            meta.className = 'comment-meta';
+
+            // Severity + footnote badge, inline with meta text.
             if (c.severity && footnoteNumber !== null) {
               let severitySymbol = '';
               const severityValue = String(c.severity).toLowerCase();
@@ -1399,18 +1541,19 @@
                 const badge = document.createElement('div');
                 badge.className = 'comment-severity-badge';
                 badge.textContent = `${footnoteNumber} ${severitySymbol}`;
-                item.appendChild(badge);
+                meta.appendChild(badge);
               }
             }
 
-            const meta = document.createElement('div');
-            meta.className = 'comment-meta';
             const parts = [];
             parts.push(`Page ${c.pageNumber}`);
             if (c.author) {
               parts.push(`by ${c.author}`);
             }
-            meta.textContent = parts.join(' • ');
+            const metaText = document.createElement('span');
+            metaText.textContent = parts.join(' • ');
+            meta.appendChild(metaText);
+
             item.appendChild(meta);
 
             const isOwner =
@@ -1785,30 +1928,48 @@
                 ) {
                   highlightOpacity = paletteJson.opacity;
                 }
+                if (
+                  paletteJson &&
+                  typeof paletteJson.statusOpenColor === 'string' &&
+                  paletteJson.statusOpenColor.trim().length > 0
+                ) {
+                  statusOpenColor = paletteJson.statusOpenColor.trim();
+                }
+                if (
+                  paletteJson &&
+                  typeof paletteJson.statusResolvedColor === 'string' &&
+                  paletteJson.statusResolvedColor.trim().length > 0
+                ) {
+                  statusResolvedColor = paletteJson.statusResolvedColor.trim();
+                }
+                if (
+                  paletteJson &&
+                  typeof paletteJson.commentSelectedColor === 'string' &&
+                  paletteJson.commentSelectedColor.trim().length > 0
+                ) {
+                  commentSelectedColor =
+                    paletteJson.commentSelectedColor.trim();
+                }
               }
             } catch (paletteErr) {
               console.error('Error loading highlight palette:', paletteErr);
             }
 
-            if (highlightColors.length === 0) {
-              highlightColors = ['#FACC15', '#22C55E', '#F97316'];
+          if (highlightColors.length === 0) {
+            highlightColors = ['#FACC15', '#22C55E', '#F97316'];
+          }
+
+          colorSwatchEls.forEach((el, index) => {
+            if (!el) return;
+            const color = highlightColors[index];
+            if (color) {
+              el.style.background = color;
+            } else {
+              el.style.background = '#ffffff';
             }
+          });
 
-            colorSwatchEls.forEach((el, index) => {
-              if (!el) return;
-              const color = highlightColors[index];
-              if (color) {
-                el.style.background = color;
-              } else {
-                el.style.background = '#ffffff';
-              }
-            });
-
-            if (eraserSwatchEl) {
-              eraserSwatchEl.style.borderStyle = 'dashed';
-            }
-
-            setActiveHighlightIndex(0);
+          setActiveHighlightIndex(0);
 
             const pdfjsLib = window['pdfjsLib'];
             const loadingTask = pdfjsLib.getDocument({ url });
